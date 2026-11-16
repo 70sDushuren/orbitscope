@@ -917,7 +917,35 @@ pub async fn serve(ctx: &Ctx, opts: ServeOpts) -> Result<()> {
             dir.display()
         );
     }
+    let archive = open_archive(cfg)?;
+    let settings_path = archive.as_ref().map(|a| a.dir().join("ui-settings.json"));
+    // 优先级:配置文件 < Web 界面保存的设置 < 命令行 --policy
+    let mut time_policy = cfg.archive.time_policy;
+    let mut collect = cfg.collect.clone();
+    if let Some(saved) = settings_path
+        .as_deref()
+        .and_then(orbit_server::PersistedSettings::load)
+    {
+        eprintln!(
+            "使用 Web 界面保存的设置:时刻策略 {},采集策略 {}",
+            saved.time_policy, saved.collect_mode
+        );
+        time_policy = saved.time_policy;
+        collect.mode = saved.collect_mode;
+    }
+    if let Some(p) = ctx.policy {
+        time_policy = p;
+    }
+    eprintln!("采集策略:{}({})", collect.mode, collect.mode.label());
+    if let Some(a) = &archive {
+        eprintln!("历史归档:{}", a.dir().display());
+    }
     let options = orbit_server::ServerOptions {
+        archive,
+        time_policy,
+        collect,
+        offline: ctx.offline,
+        settings_path,
         bind,
         tick: std::time::Duration::from_millis(cfg.server.tick_ms),
         max_ws_clients: cfg.server.max_ws_clients.max(1),

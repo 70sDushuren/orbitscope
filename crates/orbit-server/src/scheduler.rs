@@ -3,7 +3,7 @@
 //! 刷新时刻:每小时一次,固定在启动时随机选定的分钟(避开整点与半点,符合 Space-Track 规定)。
 //! 是否真正联网由各数据源的缓存与刷新间隔决定(见 orbit-sources),因此即使频繁触发也不会超频。
 
-use crate::state::{AppState, CatalogState, PositionFrame};
+use crate::state::{AppState, CatalogState, PositionFrame, RefreshKind, catalog_signature};
 use chrono::{DateTime, Duration as ChronoDuration, Timelike, Utc};
 use orbit_core::Filter;
 use orbit_sources::{FetchMode, SourceSet};
@@ -42,31 +42,148 @@ pub fn next_wake(now: DateTime<Utc>, minute: u32, second: u32) -> DateTime<Utc> 
     }
 }
 
-/// 获取数据源并替换编目。全部数据源失败时保留旧编目。
-pub async fn refresh_once(state: &AppState, sources: &SourceSet, mode: FetchMode) {
+/// 构建编目所用的数据。
+struct Built {
+    catalog: orbit_core::Catalog,
+    report: orbit_core::BuildReport,
+    provenance: Option<orbit_archive::Provenance>,
+}
+
+/// 采集(按需)并重建编目。
+///
+/// - `Collect` 且采集策略为 `serve`:联网获取(离线时只读缓存)并写入归档;
+/// - 其余情况不联网;
+/// - 历史库可用时按时刻策略从历史库选取数据,否则使用数据源的最新数据;
+/// - 编目内容无变化时不替换(避免 WS 客户端重复下载元数据)。
+pub async fn refresh_once(state: &AppState, sources: &SourceSet, kind: RefreshKind) {
     state.update_schedule(|s| s.refreshing = true);
-    let result = sources.fetch_all(mode, Utc::now()).await;
-    let ok = result.any_ok();
-    state.set_source_status(result.statuses.clone());
-    if ok {
-        let now = state.now();
-        let built = tokio::task::spawn_blocking(move || result.build_catalog(now)).await;
-        match built {
-            Ok((catalog, report)) => {
-                let generation = state.catalog.load().generation + 1;
-                tracing::info!(generation, objects = catalog.len(), "编目已更新");
-                state.catalog.store(Arc::new(CatalogState {
+    let settings = state.settings();
+    let collect = kind == RefreshKind::Collect && settings.collect_mode.serve_collects();
+    let archive = state.options.archive.clone();
+    let mut latest: Option<orbit_sources::FetchAllResult> = None;
+
+    if collect {
+        let mode = if state.options.offline {
+            FetchMode::CacheOnly
+        } else {
+            FetchMode::Normal
+        };
+        let result = sources.fetch_all(mode, Utc::now()).await;
+        state.set_source_status(result.statuses.clone());
+        let result = match (&archive, result.any_ok()) {
+            (Some(a), true) => {
+                let a = a.clone();
+                let cache = sources.cache().clone();
+                match tokio::task::spawn_blocking(move || {
+                    let r = a.record(&result, &cache, Utc::now());
+                    (result, r)
+                })
+                .await
+                {
+                    Ok((result, Ok(rep))) => {
+                        if let Some(h) = &rep.history {
+                            tracing::info!(
+                                new_elsets = h.new_elsets,
+                                snapshots = rep.snapshots_saved,
+                                "已写入历史归档"
+                            );
+                        }
+                        Some(result)
+                    }
+                    Ok((result, Err(e))) => {
+                        tracing::error!(error = %e, "写入历史归档失败");
+                        Some(result)
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "归档任务失败");
+                        None
+                    }
+                }
+            }
+            (_, ok) => ok.then_some(result),
+        };
+        latest = result;
+    }
+
+    let now = state.now();
+    let built: Option<Built> = match archive.filter(|a| a.history().is_some()) {
+        Some(a) => {
+            let policy = settings.time_policy;
+            match tokio::task::spawn_blocking(move || a.catalog_at(policy, now)).await {
+                Ok(Ok(Some((catalog, report, prov)))) => Some(Built {
                     catalog,
+                    report,
+                    provenance: Some(prov),
+                }),
+                Ok(Ok(None)) => None,
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "读取历史库失败");
+                    None
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "读取历史库任务失败");
+                    None
+                }
+            }
+        }
+        None => {
+            // 无历史库:使用本次获取结果;未采集时读缓存
+            let result = match latest {
+                Some(r) => Some(r),
+                None => {
+                    let r = sources.fetch_all(FetchMode::CacheOnly, Utc::now()).await;
+                    if state.source_status().is_empty() {
+                        state.set_source_status(r.statuses.clone());
+                    }
+                    r.any_ok().then_some(r)
+                }
+            };
+            match result {
+                Some(r) => tokio::task::spawn_blocking(move || {
+                    let (catalog, report) = r.build_catalog(now);
+                    Built {
+                        catalog,
+                        report,
+                        provenance: None,
+                    }
+                })
+                .await
+                .ok(),
+                None => None,
+            }
+        }
+    };
+
+    match built {
+        Some(b) => {
+            let signature =
+                catalog_signature(&b.catalog) ^ (settings.time_policy as u64).wrapping_mul(0x9E37_79B9);
+            let old = state.catalog.load_full();
+            if signature != old.signature || old.generation == 0 {
+                let generation = old.generation + 1;
+                tracing::info!(generation, objects = b.catalog.len(), policy = %settings.time_policy, "编目已更新");
+                state.catalog.store(Arc::new(CatalogState {
+                    catalog: b.catalog,
                     generation,
                     loaded_at: Utc::now(),
-                    report,
+                    report: b.report,
+                    provenance: b.provenance,
+                    signature,
                 }));
                 state.catalog_gen.send_replace(generation);
+            } else if b.provenance != old.provenance {
+                // 内容相同但依据说明变化(如数据时刻前进):只更新说明,不打扰客户端
+                state.catalog.store(Arc::new(CatalogState {
+                    catalog: old.catalog.clone(),
+                    generation: old.generation,
+                    loaded_at: old.loaded_at,
+                    report: old.report.clone(),
+                    provenance: b.provenance,
+                    signature,
+                }));
             }
-            Err(e) => tracing::error!(error = %e, "构建编目任务失败"),
         }
-    } else {
-        tracing::warn!("所有数据源均失败,保留现有编目");
+        None => tracing::warn!("没有可用数据,保留现有编目"),
     }
     state.update_schedule(|s| {
         s.refreshing = false;
@@ -74,28 +191,45 @@ pub async fn refresh_once(state: &AppState, sources: &SourceSet, mode: FetchMode
     });
 }
 
-/// 刷新调度循环。
+/// 刷新调度循环:serve 采集模式下每小时随机分钟联网采集;另每隔 `reload_minutes` 从本地重新加载。
 pub async fn run_scheduler(
     state: Arc<AppState>,
     sources: Arc<SourceSet>,
-    mut refresh_rx: mpsc::Receiver<()>,
+    mut refresh_rx: mpsc::Receiver<RefreshKind>,
 ) {
     let minute = state.schedule_info().refresh_minute;
     let second = (random_u64() % 60) as u32;
+    let reload = ChronoDuration::minutes(state.options.collect.reload_minutes.clamp(1, 1_440) as i64);
     let mut shutdown = state.shutdown.subscribe();
     loop {
-        let wake = next_wake(Utc::now(), minute, second);
-        state.update_schedule(|s| s.next_refresh = Some(wake));
+        let now = Utc::now();
+        let next_collect = state
+            .settings()
+            .collect_mode
+            .serve_collects()
+            .then(|| next_wake(now, minute, second));
+        let next_reload = now + reload;
+        state.update_schedule(|s| {
+            s.next_refresh = next_collect;
+            s.next_reload = Some(next_reload);
+        });
+        let (wake, kind) = match next_collect {
+            Some(c) if c <= next_reload => (c, RefreshKind::Collect),
+            _ => (next_reload, RefreshKind::Reload),
+        };
         let sleep = (wake - Utc::now()).to_std().unwrap_or_default();
-        tokio::select! {
-            _ = tokio::time::sleep(sleep) => {}
-            req = refresh_rx.recv() => {
-                if req.is_none() { break; }
-                tracing::info!("收到手动刷新请求");
-            }
+        let kind = tokio::select! {
+            _ = tokio::time::sleep(sleep) => kind,
+            req = refresh_rx.recv() => match req {
+                Some(k) => {
+                    tracing::info!(?k, "收到刷新请求");
+                    k
+                }
+                None => break,
+            },
             _ = shutdown.changed() => break,
-        }
-        refresh_once(&state, &sources, FetchMode::Normal).await;
+        };
+        refresh_once(&state, &sources, kind).await;
     }
 }
 

@@ -13,9 +13,11 @@ pub mod state;
 pub mod web;
 pub mod ws;
 
-pub use state::{AppState, DEFAULT_CESIUM_URL, ServerOptions};
+pub use state::{
+    AppState, DEFAULT_CESIUM_URL, PersistedSettings, RefreshKind, RuntimeSettings, ServerOptions,
+};
 
-use orbit_sources::{FetchMode, SourceSet};
+use orbit_sources::SourceSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -70,7 +72,7 @@ pub async fn serve_with_listener(
 
     let sources = Arc::new(sources);
     // 首次加载(新鲜缓存直接使用,否则联网)
-    scheduler::refresh_once(&state, &sources, FetchMode::Normal).await;
+    scheduler::refresh_once(&state, &sources, RefreshKind::Collect).await;
     tracing::info!(objects = state.catalog.load().catalog.len(), %local, "OrbitScope 服务已启动");
 
     let sched = tokio::spawn(scheduler::run_scheduler(state.clone(), sources, refresh_rx));

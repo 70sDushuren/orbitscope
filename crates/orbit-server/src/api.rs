@@ -68,6 +68,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/refresh", post(refresh))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/client-config", get(client_config))
+        .route("/api/v1/settings", get(get_settings).put(put_settings))
         .merge(crate::web::routes(&state.options))
         .with_state(state)
 }
@@ -148,15 +149,29 @@ struct StatusResponse {
     schedule: crate::state::ScheduleInfo,
     ws_clients: usize,
     tick_ms: u64,
+    settings: SettingsResponse,
+    /// 当前编目的数据依据(来自历史库时)
+    provenance: Option<orbit_archive::Provenance>,
+    /// 历史库中最近的采集记录
+    recent_fetches: Vec<orbit_archive::FetchRow>,
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
     let cs = state.catalog.load_full();
+    let recent_fetches = match state.options.archive.clone() {
+        Some(a) => tokio::task::spawn_blocking(move || a.history().map(|h| h.recent_fetches(10)))
+            .await
+            .ok()
+            .flatten()
+            .and_then(Result::ok)
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
     Json(StatusResponse {
         version: env!("CARGO_PKG_VERSION"),
         started_at: state.started_at,
         server_time: state.now(),
-        time_offset_secs: state.options.time_offset.num_seconds(),
+        time_offset_secs: state.settings().time_offset.num_seconds(),
         generation: cs.generation,
         objects: cs.catalog.len(),
         catalog_loaded_at: cs.loaded_at,
@@ -165,7 +180,137 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
         schedule: state.schedule_info(),
         ws_clients: state.ws_clients.load(Ordering::SeqCst),
         tick_ms: state.options.tick.as_millis() as u64,
+        settings: settings_response(&state),
+        provenance: cs.provenance.clone(),
+        recent_fetches,
     })
+}
+
+// ------------------------------------------------------------------ settings
+
+#[derive(Serialize)]
+struct Choice {
+    id: &'static str,
+    label: &'static str,
+}
+
+#[derive(Serialize)]
+struct SettingsResponse {
+    time_policy: orbit_archive::TimePolicy,
+    collect_mode: orbit_archive::CollectMode,
+    /// "live"(实时)或 "fixed"(指定时刻,时钟从该时刻继续走)
+    time_mode: &'static str,
+    server_time: DateTime<Utc>,
+    time_offset_secs: i64,
+    history_enabled: bool,
+    /// 设置是否会保存到磁盘(否则只在本次运行有效)
+    persisted: bool,
+    policies: Vec<Choice>,
+    collect_modes: Vec<Choice>,
+}
+
+fn settings_response(state: &AppState) -> SettingsResponse {
+    let s = state.settings();
+    SettingsResponse {
+        time_policy: s.time_policy,
+        collect_mode: s.collect_mode,
+        time_mode: if s.time_offset.is_zero() { "live" } else { "fixed" },
+        server_time: state.now(),
+        time_offset_secs: s.time_offset.num_seconds(),
+        history_enabled: state
+            .options
+            .archive
+            .as_ref()
+            .is_some_and(|a| a.history().is_some()),
+        persisted: state.options.settings_path.is_some(),
+        policies: orbit_archive::TimePolicy::ALL
+            .iter()
+            .map(|p| Choice {
+                id: p.as_str(),
+                label: p.label(),
+            })
+            .collect(),
+        collect_modes: orbit_archive::CollectMode::ALL
+            .iter()
+            .map(|m| Choice {
+                id: m.as_str(),
+                label: m.label(),
+            })
+            .collect(),
+    }
+}
+
+async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsResponse> {
+    Json(settings_response(&state))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsPatch {
+    time_policy: Option<String>,
+    collect_mode: Option<String>,
+    /// "live" 回到实时;或 RFC3339 时刻(时钟从该时刻继续走)
+    time: Option<String>,
+}
+
+async fn put_settings(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(patch): Json<SettingsPatch>,
+) -> ApiResult<SettingsResponse> {
+    check_write(&state, &headers, peer)?;
+    let policy = patch
+        .time_policy
+        .as_deref()
+        .map(str::parse::<orbit_archive::TimePolicy>)
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    let mode = patch
+        .collect_mode
+        .as_deref()
+        .map(str::parse::<orbit_archive::CollectMode>)
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    let offset = match patch.time.as_deref().map(str::trim) {
+        None => None,
+        Some(t) if t.eq_ignore_ascii_case("live") => Some(chrono::Duration::zero()),
+        Some(t) => {
+            let at = DateTime::parse_from_rfc3339(t)
+                .map_err(|e| ApiError::bad_request(format!("无法解析时刻 {t:?}: {e}")))?
+                .with_timezone(&Utc);
+            Some(at - Utc::now())
+        }
+    };
+    let new = state.update_settings(|s| {
+        if let Some(p) = policy {
+            s.time_policy = p;
+        }
+        if let Some(m) = mode {
+            s.collect_mode = m;
+        }
+        if let Some(o) = offset {
+            s.time_offset = o;
+        }
+    });
+    if let Some(path) = &state.options.settings_path {
+        let persisted = crate::state::PersistedSettings {
+            time_policy: new.time_policy,
+            collect_mode: new.collect_mode,
+        };
+        if let Err(e) = persisted.save(path) {
+            tracing::warn!(error = %e, "保存界面设置失败");
+        }
+    }
+    tracing::info!(policy = %new.time_policy, mode = %new.collect_mode, offset_s = new.time_offset.num_seconds(), "设置已更新");
+    // 立即按新设置重建编目(切换到 serve 采集时同时联网采集一次)
+    let kind = if mode == Some(orbit_archive::CollectMode::Serve) {
+        crate::state::RefreshKind::Collect
+    } else {
+        crate::state::RefreshKind::Reload
+    };
+    let _ = state.refresh_tx.try_send(kind);
+    Ok(Json(settings_response(&state)))
 }
 
 async fn get_default_filter(State(state): State<Arc<AppState>>) -> Json<orbit_core::Filter> {
@@ -401,7 +546,10 @@ async fn refresh(
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     check_write(&state, &headers, peer)?;
-    let queued = state.refresh_tx.try_send(()).is_ok();
+    let queued = state
+        .refresh_tx
+        .try_send(crate::state::RefreshKind::Collect)
+        .is_ok();
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({

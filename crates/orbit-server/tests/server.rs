@@ -28,15 +28,26 @@ struct TestServer {
 
 impl TestServer {
     async fn start(customize: impl FnOnce(&mut ServerOptions)) -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let td = |f: &str| format!("{}/../../testdata/{f}", env!("CARGO_MANIFEST_DIR")).into();
-        let files = FileSource::new(FileConfig {
-            paths: vec![
+        let td = |f: &str| -> std::path::PathBuf {
+            format!("{}/../../testdata/{f}", env!("CARGO_MANIFEST_DIR")).into()
+        };
+        Self::start_with_files(
+            vec![
                 td("spacetrack_gp.json"),
                 td("sample.3le"),
                 td("celestrak_gp.json"),
             ],
-        });
+            customize,
+        )
+        .await
+    }
+
+    async fn start_with_files(
+        paths: Vec<std::path::PathBuf>,
+        customize: impl FnOnce(&mut ServerOptions),
+    ) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let files = FileSource::new(FileConfig { paths });
         let sources = SourceSet::new(vec![Source::File(files)], Cache::new(dir.path()));
 
         let target: DateTime<Utc> = DateTime::parse_from_rfc3339(AT).unwrap().to_utc();
@@ -235,18 +246,20 @@ async fn default_filter_and_refresh_from_localhost() {
         .unwrap();
     assert_eq!(r.status(), 400);
 
+    let before = s.get("/api/v1/status").await.1["schedule"]["last_refresh"].clone();
     let r = s.client.post(s.url("/api/v1/refresh")).send().await.unwrap();
     assert_eq!(r.status(), 202);
-    // 手动刷新后编目代数增加
-    let mut gen_now = 0;
-    for _ in 0..50 {
-        gen_now = s.get("/api/v1/status").await.1["generation"].as_u64().unwrap();
-        if gen_now >= 2 {
+    // 手动刷新会执行,但数据未变时编目代数不变(客户端无需重新下载元数据)
+    let mut after = before.clone();
+    for _ in 0..100 {
+        after = s.get("/api/v1/status").await.1["schedule"]["last_refresh"].clone();
+        if after != before {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert_eq!(gen_now, 2);
+    assert_ne!(after, before, "刷新应已执行");
+    assert_eq!(s.get("/api/v1/status").await.1["generation"], 1);
     s.stop().await;
 }
 
@@ -497,5 +510,158 @@ async fn local_cesium_dir_is_served() {
             .status(),
         404
     );
+    s.stop().await;
+}
+
+// ---------------------------------------------------------------- 历史归档与设置
+
+/// 复制 testdata 文件到 `dir`,修改时间(获取时间)设为 2024-01-01T12:10:00Z。
+fn fetched_copy(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let src = format!("{}/../../testdata/{name}", env!("CARGO_MANIFEST_DIR"));
+    let dst = dir.join(name);
+    std::fs::copy(src, &dst).unwrap();
+    let t: std::time::SystemTime = DateTime::parse_from_rfc3339("2024-01-01T12:10:00Z")
+        .unwrap()
+        .to_utc()
+        .into();
+    std::fs::File::options()
+        .write(true)
+        .open(&dst)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+    dst
+}
+
+fn archive_in(dir: &std::path::Path) -> std::sync::Arc<orbit_archive::Archive> {
+    let cfg = orbit_archive::ArchiveConfig {
+        dir: Some(dir.to_path_buf()),
+        ..Default::default()
+    };
+    std::sync::Arc::new(orbit_archive::Archive::open(&cfg).unwrap())
+}
+
+async fn wait_for(s: &TestServer, pred: impl Fn(&Value) -> bool) -> Value {
+    for _ in 0..150 {
+        let v = s.get("/api/v1/status").await.1;
+        if pred(&v) {
+            return v;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("等待状态超时: {}", s.get("/api/v1/status").await.1);
+}
+
+async fn put_settings(s: &TestServer, body: Value) -> (u16, Value) {
+    let r = s
+        .client
+        .put(s.url("/api/v1/settings"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let code = r.status().as_u16();
+    (code, r.json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn history_known_at_and_runtime_settings() {
+    let data = tempfile::tempdir().unwrap();
+    let f = fetched_copy(data.path(), "spacetrack_gp.json");
+    let arch = archive_in(&data.path().join("archive"));
+    let settings_path = data.path().join("archive/ui-settings.json");
+    let sp = settings_path.clone();
+    let s = TestServer::start_with_files(vec![f], move |o| {
+        o.archive = Some(arch);
+        o.settings_path = Some(sp);
+    })
+    .await;
+
+    // 服务端时刻 12:30,文件 12:10 获取 → known-at 可见(ISS 与 90001;90004 已再入)
+    let st = s.get("/api/v1/status").await.1;
+    assert_eq!(st["objects"], 2, "{st}");
+    assert_eq!(st["provenance"]["policy"], "known-at");
+    assert_eq!(st["provenance"]["first_seen_max"], "2024-01-01T12:10:00Z");
+    let (_, set) = s.get("/api/v1/settings").await;
+    assert_eq!(set["time_policy"], "known-at");
+    assert_eq!(set["time_mode"], "fixed");
+    assert_eq!(set["history_enabled"], true);
+    assert_eq!(set["policies"].as_array().unwrap().len(), 3);
+    let (_, list) = s.get("/api/v1/objects").await;
+    assert_eq!(list["items"][0]["fetched_at"], "2024-01-01T12:10:00Z");
+
+    // 切换到获取时间之前的时刻:known-at 下没有数据
+    let (code, v) = put_settings(&s, json!({"time": "2024-01-01T12:05:00Z"})).await;
+    assert_eq!(code, 200, "{v}");
+    let st = wait_for(&s, |v| v["objects"] == 0).await;
+    assert_eq!(st["generation"], 2);
+
+    // 同一时刻切换为 nearest-epoch:数据回来
+    put_settings(&s, json!({"time_policy": "nearest-epoch"})).await;
+    let st = wait_for(&s, |v| v["objects"] == 2).await;
+    assert_eq!(st["provenance"]["policy"], "nearest-epoch");
+
+    // 设置已保存到磁盘(时间不保存)
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        json!({"time_policy": "nearest-epoch", "collect_mode": "serve"})
+    );
+
+    // 切换采集策略为 daemon:不再安排联网采集
+    let (_, v) = put_settings(&s, json!({"collect_mode": "daemon"})).await;
+    assert_eq!(v["collect_mode"], "daemon");
+    let st = wait_for(&s, |v| v["schedule"]["next_refresh"].is_null()).await;
+    assert!(st["schedule"]["next_reload"].is_string());
+
+    // 回到实时
+    let (_, v) = put_settings(&s, json!({"time": "live"})).await;
+    assert_eq!(v["time_mode"], "live");
+
+    // 非法值
+    for bad in [
+        json!({"time_policy": "x"}),
+        json!({"collect_mode": "cron"}),
+        json!({"time": "yesterday"}),
+        json!({"typo": 1}),
+    ] {
+        let (code, _) = put_settings(&s, bad.clone()).await;
+        assert!(code == 400 || code == 422, "{bad}: {code}");
+    }
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn daemon_mode_server_never_collects() {
+    let data = tempfile::tempdir().unwrap();
+    let f = fetched_copy(data.path(), "spacetrack_gp.json");
+    let arch = archive_in(&data.path().join("archive"));
+    let a2 = arch.clone();
+    let s = TestServer::start_with_files(vec![f], move |o| {
+        o.archive = Some(arch);
+        o.collect.mode = orbit_archive::CollectMode::Daemon;
+    })
+    .await;
+    // 历史库为空,服务端不会自行采集 → 没有数据
+    let st = s.get("/api/v1/status").await.1;
+    assert_eq!(st["objects"], 0);
+    assert!(st["schedule"]["next_refresh"].is_null());
+    assert_eq!(
+        a2.history().unwrap().usage().unwrap().elsets,
+        0,
+        "daemon 模式下 serve 不写入历史"
+    );
+
+    // 模拟独立采集进程写入历史后,服务端重新加载即可看到
+    let src = FileSource::new(FileConfig {
+        paths: vec![data.path().join("spacetrack_gp.json")],
+    });
+    let set = SourceSet::new(vec![Source::File(src)], Cache::new(data.path().join("c2")));
+    let result = set.fetch_all(orbit_sources::FetchMode::Normal, Utc::now()).await;
+    a2.record(&result, set.cache(), Utc::now()).unwrap();
+    let r = s.client.post(s.url("/api/v1/refresh")).send().await.unwrap();
+    assert_eq!(r.status(), 202);
+    // 刷新请求在 daemon 模式下只重新加载
+    wait_for(&s, |v| v["objects"] == 2).await;
     s.stop().await;
 }

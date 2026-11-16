@@ -1644,6 +1644,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures-util",
+ "orbit-archive",
  "orbit-core",
  "orbit-sources",
  "reqwest",

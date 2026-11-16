@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 orbit-core.workspace = true
 orbit-sources.workspace = true
+orbit-archive.workspace = true
 arc-swap.workspace = true
 axum.workspace = true
 chrono.workspace = true
