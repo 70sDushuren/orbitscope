@@ -137,27 +137,42 @@ pub struct StateVector {                      // 外推结果
 
 ## 4. 数据源设计(orbit-sources)
 
+数据源用枚举 `Source { SpaceTrack, CelesTrak, File }` 统一调度(见 ADR-011),由 `SourceSet` 按优先级依次获取:
+
 ```rust
-#[async_trait]
-pub trait GpSource: Send + Sync {
-    fn id(&self) -> SourceId;
-    fn min_refresh_interval(&self) -> Duration;     // 数据源政策允许的最短间隔
-    async fn fetch(&self, cache: &Cache) -> Result<SourceBatch, SourceError>;
+impl SourceSet {
+    pub fn from_config(cfg: &SourcesConfig, creds: Option<Credentials>) -> Result<Self, SourceError>;
+    pub async fn fetch_all(&self, mode: FetchMode, now: DateTime<Utc>) -> FetchAllResult;
+}
+impl FetchAllResult {
+    pub fn build_catalog(self, now) -> (Catalog, BuildReport);   // 合并 SATCAT 元数据后构建编目
 }
 ```
 
 | 数据源 | 认证 | 内容 | 刷新策略 |
 |-------|------|------|---------|
-| **Space-Track** | 账号(cookie 会话:POST `/ajaxauth/login`) | `class/gp` 全量:`decay_date/null-val/epoch/>now-30/orderby/norad_cat_id/format/json`,含 OBJECT_TYPE、RCS_SIZE、COUNTRY_CODE、PERIAPSIS、APOAPSIS | ≥ 1 小时一次,错开整点/半点;全局限速 ≤ 20 次/分(低于官方上限留余量) |
-| **CelesTrak GP** | 无 | `gp.php?GROUP=<g>&FORMAT=json`,分组可配置(默认 `active` + 若干碎片事件分组) | 默认 2 小时;使用条件请求/对比内容哈希,未更新不重复下载 |
-| **CelesTrak SATCAT** | 无 | SATCAT CSV(OBJECT_TYPE、OWNER、RCS 数值、DECAY) | 每天 1 次 |
-| **文件** | 无 | TLE/3LE/OMM JSON/XML/CSV | 启动时 / 文件变化时 |
+| **Space-Track** | 账号(cookie 会话:`POST /ajaxauth/login`,表单 `identity` / `password`;401 时自动重登一次) | `class/gp/decay_date/null-val/epoch/%3Enow-10/PERIAPSIS/%3C2000/orderby/norad_cat_id/format/json`;含 OBJECT_TYPE、RCS_SIZE、COUNTRY_CODE 等,无需另取 SATCAT。`PERIAPSIS` 预筛可配置(默认 2000 km,减少下载量) | **硬下限 1 小时**(官方规定);限速默认 20 次/分、200 次/时(官方上限 30 / 300,代码中强制钳制在上限以下);随机分钟调度在 M4 实现 |
+| **CelesTrak GP** | 无 | `/NORAD/elements/gp.php?GROUP=<g>&FORMAT=json`;默认分组 `active`、`cosmos-1408-debris`、`fengyun-1c-debris`、`iridium-33-debris`、`cosmos-2251-debris` | 默认 120 分钟,硬下限 60 分钟;ETag / Last-Modified 条件请求,304 时沿用缓存 |
+| **CelesTrak SATCAT** | 无 | `/pub/satcat.csv`(OBJECT_TYPE、OWNER、数值 RCS m²、DECAY_DATE),按编号补全 GP 记录元数据 | 默认 1 天,硬下限 12 小时 |
+| **文件** | 无 | TLE / 3LE / OMM JSON(按内容识别) | 每次获取时读取 |
 
-> 注:CelesTrak 的具体分组名、SATCAT 下载地址及使用政策细节须在 M2 编码前对照官网再次核实
-> (规划阶段的运行环境无法访问 celestrak.org)。
+获取流程(`http::cached_fetch`):
 
-缓存:`$XDG_CACHE_HOME/orbitscope/<source>/<key>.json` + `meta.json`(抓取时间、ETag/Last-Modified、哈希)。
-所有 HTTP 请求带统一 `User-Agent: orbitscope/<ver>`,不附带任何个人信息。
+1. `CacheOnly`:只读缓存,无缓存则报 `NoCache`;
+2. `Normal`:缓存年龄 < 刷新间隔 → 直接用缓存(**程序重启后同样生效**,保证不违反频率规定);
+3. 否则联网(带条件请求头),失败最多重试 1 次(5xx / 429 / 网络错误,尊重 `Retry-After`);
+4. 联网失败但有旧缓存 → 使用旧缓存并标记 `StaleCache`;单个分组/文件失败只记入 `notes`,全部失败才报错。
+
+缓存:`<cache_dir>/<key>.body` + `<key>.meta.json`(URL、fetched_at、ETag、Last-Modified、字节数),临时文件 + rename 原子写入。
+默认 `cache_dir` 为用户缓存目录下的 `orbitscope`。
+
+所有 HTTP 请求带统一 `User-Agent: orbitscope/<ver>`,不附带任何个人信息。`Credentials` 的 `Debug` 输出不含密码,
+登录错误信息不含凭据(有测试覆盖)。
+
+> **已核实(2026-11)**:Space-Track 官方文档中的限速、GP 每小时 1 次及推荐查询条件。
+> Space-Track 的 `RCSVALUE` 对普通账号恒为 0,且自 2026-05-28 起单位改为"米",因此不读取该字段,只用 `RCS_SIZE` 分档。
+> **未能核实**:CelesTrak 在本项目的云端开发环境中返回 500 / 连接被重置(疑似拒绝数据中心 IP),
+> 分组名与 SATCAT 路径依据其公开文档格式实现,均可在配置中修改,首次在本地运行时需确认。
 
 ## 5. 服务端设计(orbit-server)
 
@@ -253,3 +268,5 @@ tick_ms = 1000
 | 008 | 默认数据源 CelesTrak,Space-Track 可选 | 只用 Space-Track | 免注册即可开箱运行;需要全量碎片时再配账号 |
 | 009 | SGP4 使用 sgp4 crate 默认(改进)模式 | AFSPC 兼容模式 | crate 推荐;与 AFSPC 参考向量差异仅数十米,远小于 SGP4 的 km 级误差 |
 | 010 | 根数龄期过滤放在 `Filter`(运行时可调),编目构建只剔除已再入与非法根数 | 构建时剔除过期根数 | 修改龄期阈值无需重建编目 |
+| 011 | 数据源用枚举 `Source` 而非 `dyn Trait` | `async_trait` + trait 对象 | 数据源种类固定且少;避免额外依赖与装箱 future |
+| 012 | 刷新间隔设硬下限,且以磁盘缓存时间为准 | 只在内存中记录上次抓取时间 | 程序反复重启也不会违反数据源频率规定 |

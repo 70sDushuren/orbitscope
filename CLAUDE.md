@@ -34,6 +34,8 @@ cargo fmt --all
 cargo run -p orbitscope -- serve --config config/orbitscope.example.toml
 cargo bench -p orbit-core
 cargo run -p orbit-core --example demo -- testdata/spacetrack_gp.json 2024-01-01T12:30:00Z
+cargo run -p orbit-sources --example fetch -- --offline        # 只用缓存
+cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据环境变量
 ```
 
 ## 编码约定
@@ -58,11 +60,16 @@ cargo run -p orbit-core --example demo -- testdata/spacetrack_gp.json 2024-01-01
 - HTTP `User-Agent` 统一为 `orbitscope/<version>`,不附带任何个人信息。
 - 不得把 Space-Track 原始数据提交到仓库(用户协议限制再分发);`testdata/` 只放少量公开样本或合成数据。
 
+## 开发环境说明
+
+- 云端开发环境访问 celestrak.org 返回 500 / 连接重置(疑似拒绝数据中心 IP),**不要反复重试**(CelesTrak 会封禁产生大量错误的 IP);
+  需要真实 CelesTrak 数据时请在本地运行。www.space-track.org 可访问。
+
 ## 当前进度
 
 - [x] M0 规划文档
 - [x] M1 orbit-core(44 个测试;基准:3 万物体单线程 ~30 ms,4 核并行 ~8 ms)
-- [ ] M2 orbit-sources
+- [x] M2 orbit-sources(26 个测试,全部基于 wiremock;CelesTrak 真实接口尚未在本地验证)
 - [ ] M3 CLI
 - [ ] M4 orbit-server
 - [ ] M5 Web 前端

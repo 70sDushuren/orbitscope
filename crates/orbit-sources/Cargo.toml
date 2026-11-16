@@ -1,0 +1,27 @@
+[package]
+name = "orbit-sources"
+description = "OrbitScope 数据源:CelesTrak / Space-Track / 本地文件,磁盘缓存与限速"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+orbit-core.workspace = true
+chrono.workspace = true
+csv.workspace = true
+dirs.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+wiremock.workspace = true
+
+[lints]
+workspace = true
