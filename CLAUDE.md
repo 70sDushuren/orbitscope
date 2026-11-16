@@ -16,6 +16,7 @@ OrbitScope:用 Rust 编写的准实时近地轨道空间物体监视程序。从
 ```
 crates/orbit-core     纯计算库:模型、OMM/TLE 解析、SGP4 外推、坐标转换、尺寸估算、过滤。禁止 IO / async / 网络
 crates/orbit-sources  数据源 trait 与实现、磁盘缓存、限速、SATCAT 合并(async)
+crates/orbit-archive  历史归档:SQLite 根数历史库(只追加)、完整快照(有上限)、时刻策略、采集策略类型
 crates/orbit-server   axum REST + WebSocket、调度器、Ticker
 crates/orbitscope     二进制 CLI(clap):fetch / list / show / export / stats / serve
 web/                  CesiumJS 前端(原生 ES Module,无构建步骤),rust-embed 打包进 orbit-server
@@ -23,7 +24,7 @@ scripts/              browser-smoke.js(Playwright 冒烟测试)、gen_synthetic.
 testdata/             离线测试样本
 config/               示例配置
 ```
-依赖方向只能是 `orbitscope → orbit-server → orbit-sources → orbit-core`。
+依赖方向只能是 `orbitscope → orbit-server → orbit-archive → orbit-sources → orbit-core`。
 
 ## 常用命令
 
@@ -34,7 +35,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p orbitscope -- --help
 cargo run -p orbitscope -- -c <配置> serve --sim-time 2024-01-01T12:30:00Z   # 用 testdata 演示服务
-cargo run -p orbitscope -- -c <配置> list --at 2024-01-01T12:30:00Z --any-age   # 配合 testdata 的 files 源
+cargo run -p orbitscope -- -c <配置> --policy nearest-epoch list --at 2024-01-01T12:30:00Z --any-age   # testdata 历元在 2024 年,known-at 下需文件修改时间早于 --at
 cargo bench -p orbit-core
 cargo run -p orbit-core --example demo -- testdata/spacetrack_gp.json 2024-01-01T12:30:00Z
 cargo run -p orbit-sources --example fetch -- --offline        # 只用缓存
@@ -63,6 +64,10 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - 发布:更新 `CHANGELOG.md` 与各 crate 版本号后打 `v*` 标签,Release 工作流自动构建三平台二进制。
 - `rust-version = "1.88"`(let-chains 需要);提高 MSRV 时同步 CI 的 msrv 任务。
 - 服务需同时响应 SIGINT 与 SIGTERM(容器 / systemd 停止服务依赖 SIGTERM)。
+- 历史库只追加:同一 (norad, epoch, source) 先写入者为准,`first_seen` 取数据源获取时间(`GpRecord.fetched_at`),
+  绝不改写已有行;清理时每个物体最新一条永不删除。改动 `history.rs` 的选择 SQL 须保持 known-at 的可复现性(有测试)。
+- 测试与 CLI 端到端测试必须把 `[archive] dir` 指向临时目录(CLI 测试还隔离了 HOME / XDG_* 环境变量)。
+- 服务端设置(时刻策略、采集策略、时间)可运行期修改;非 serve 采集模式下服务端绝不联网。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
 ## 数据源规则(必须遵守)
@@ -88,3 +93,4 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - [x] M4 orbit-server(REST + WebSocket OSF1 帧、随机分钟调度、token/本机写鉴权;15 个测试)
 - [x] M5 Web 前端(CesiumJS 3D 地球、过滤/搜索/统计/详情;浏览器冒烟测试 `scripts/browser-smoke.js`)
 - [x] M6 打包发布(Dockerfile 内置 Cesium、compose、systemd、CI / Release 工作流、使用手册、许可证;MSRV 1.88 已验证)
+- [x] v0.2 历史归档与采集策略(orbit-archive;known-at / nearest-epoch / latest;serve / daemon / external;Web 设置面板)

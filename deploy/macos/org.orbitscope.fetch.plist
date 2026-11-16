@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  采集策略 external:每小时第 17 分运行一次 orbitscope fetch(避开整点与半点)。
+  配置中设置 [collect] mode = "external"。
+    cp deploy/macos/org.orbitscope.fetch.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/org.orbitscope.fetch.plist
+  电脑睡眠时错过的运行会在唤醒后补一次。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.orbitscope.fetch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/orbitscope</string>
+    <string>--quiet</string>
+    <string>fetch</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key><integer>17</integer>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/orbitscope-fetch.log</string>
+  <key>StandardErrorPath</key><string>/tmp/orbitscope-fetch.log</string>
+</dict>
+</plist>

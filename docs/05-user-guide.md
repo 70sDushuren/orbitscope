@@ -1,6 +1,6 @@
 # OrbitScope 使用手册
 
-> 适用版本 0.1.0。设计细节见 [03-design.md](03-design.md)。
+> 适用版本 0.2.0。设计细节见 [03-design.md](03-design.md)。
 
 ## 1. 安装
 
@@ -31,8 +31,16 @@ docker run -d -p 127.0.0.1:8080:8080 -v orbitscope-cache:/var/cache/orbitscope o
 自定义配置:`-v ./my.toml:/etc/orbitscope/config.toml:ro`(容器内需保留 `bind = "0.0.0.0:8080"` 与
 `cesium_dir = "/opt/cesium"`,参考 `docker/config.toml`)。
 
-### 1.4 systemd
-见 `deploy/orbitscope.service` 文件头部的步骤。
+### 1.4 开机自启 / 定时采集
+按采集策略(见第 3 节)选择:
+
+| 采集策略 | Linux(systemd) | macOS(launchd,登录后运行) |
+|---------|-----------------|---------------------------|
+| `serve` | `deploy/linux/orbitscope.service` | `deploy/macos/org.orbitscope.serve.plist` |
+| `daemon` | `deploy/linux/orbitscope-collect.service` | `deploy/macos/org.orbitscope.collect.plist` |
+| `external` | `deploy/linux/orbitscope-fetch.service` + `.timer` | `deploy/macos/org.orbitscope.fetch.plist` |
+
+各文件头部有安装步骤。`daemon` / `external` 模式下如需 Web 界面,另外运行 `serve`(它只读本地历史,不联网)。
 
 ## 2. 数据源
 
@@ -62,7 +70,66 @@ docker run -d -p 127.0.0.1:8080:8080 -v orbitscope-cache:/var/cache/orbitscope o
 - 服务模式下每小时在随机分钟检查一次更新(避开整点/半点,符合 Space-Track 规定);
 - 联网失败时自动使用旧缓存,并在状态中标注;`--offline` 只用缓存。
 
-## 3. 过滤条件
+## 3. 历史归档与采集策略
+
+### 3.1 数据存放在哪里
+| 内容 | 位置 | 说明 |
+|------|------|------|
+| 下载缓存 | 用户缓存目录下的 `orbitscope/`(macOS `~/Library/Caches/orbitscope`,Linux `~/.cache/orbitscope`) | 每个资源只保留最新一份,用于控制下载频率;可随时删除 |
+| 根数历史库 | 归档目录下的 `history.sqlite` | **不覆盖**:每组根数(编号 + 历元)只写一次,并记录首次获取时间 |
+| 完整快照 | 归档目录下的 `snapshots/<资源>/<UTC 时间戳>.body.gz` | 每次网络下载的原始文件,压缩保存,用于追溯 |
+| 界面设置 | 归档目录下的 `ui-settings.json` | Web 界面中切换的时刻策略与采集策略 |
+
+归档目录默认为用户数据目录下的 `orbitscope/`(macOS `~/Library/Application Support/orbitscope`,
+Linux `~/.local/share/orbitscope`),可用 `[archive] dir` 修改。
+
+### 3.2 容量控制
+```toml
+[archive.snapshots]
+max_files = 200        # 最多快照文件数,0 = 不限
+max_total_mb = 1024    # 快照总空间上限,0 = 不限
+
+[archive.history]
+retain_days = 0        # 只保留最近多少天获取的根数,0 = 不限
+max_total_mb = 4096    # 历史库空间上限,0 = 不限
+```
+超出时删除最旧的快照 / 最旧的根数;**每个物体最新的一组根数永不删除**。每次采集后自动执行,也可 `orbitscope history prune`。
+
+### 3.3 时刻策略:指定时刻 T 时用哪组根数
+| 策略 | 含义 | 适用 |
+|------|------|------|
+| `known-at`(默认) | T 时刻**已经获取到**的最新根数 | "当时系统看到的样子",同一个 T 无论何时查询结果都相同 |
+| `nearest-epoch` | 历元最接近 T 的根数(可能是 T 之后才获取的) | 回看过去时位置更准 |
+| `latest` | 历元最新的根数 | 与 0.1 版行为相同 |
+
+设置方式:配置 `[archive] time_policy`;命令行 `--policy`;Web 界面"时间与数据"。
+所有输出都注明数据依据(策略、数据时刻、根数获取时间范围);CSV/JSON 每行带 `fetched_at`。
+
+Web 界面可在"实时"与"指定时刻"之间切换:指定时刻后,服务端时钟从该时刻继续走,状态栏显示"回放"。
+
+### 3.4 采集策略
+| 策略 | 谁负责联网采集 | Web 服务 |
+|------|---------------|---------|
+| `serve`(默认) | `orbitscope serve`,每小时在随机分钟检查 | 采集 + 展示 |
+| `daemon` | 常驻进程 `orbitscope collect` | 只读本地历史,每 5 分钟重新加载 |
+| `external` | 系统定时任务运行 `orbitscope fetch` | 同上 |
+
+设置方式:配置 `[collect] mode`;Web 界面"时间与数据"(对运行中的服务立即生效并保存)。
+无论哪种策略,真正联网的频率都受各数据源最短间隔限制,多个进程同时运行也不会超频。
+
+### 3.5 相关命令
+```bash
+orbitscope history status              # 归档目录、历史库与快照的占用和上限
+orbitscope history fetches -n 50       # 最近的采集记录
+orbitscope history object 25544        # 某物体的全部历史根数及其获取时间
+orbitscope history snapshots           # 最近的完整快照
+orbitscope history prune               # 立即按保留设置清理
+orbitscope collect                     # 常驻采集(daemon)
+orbitscope collect --once              # 采集一次后退出
+orbitscope --policy nearest-epoch list --at 2026-11-01T00:00:00Z
+```
+
+## 4. 过滤条件
 
 | 配置项(`[filter]`) | 命令行 | 说明 |
 |--------------------|-------|------|
@@ -82,7 +149,7 @@ docker run -d -p 127.0.0.1:8080:8080 -v orbitscope-cache:/var/cache/orbitscope o
 换算为直径区间(< 0.36 m、0.36–1.13 m、> 1.13 m)。门限落在区间内部或没有 RCS 时为"无法判定",
 由 `unknown_size` 决定是否显示。美国空间监视网在近地轨道的编目门限约为 10 cm,因此把门限调到 10 cm 以下不会得到更多物体。
 
-## 4. 命令行
+## 5. 命令行
 
 ```bash
 orbitscope fetch                                      # 获取并缓存数据
@@ -104,7 +171,7 @@ orbitscope serve                                      # Web 服务
 
 配置文件查找顺序:`--config` → `./orbitscope.toml` → 用户配置目录 `orbitscope/config.toml`(Linux 为 `~/.config/orbitscope/config.toml`)→ 默认值。
 
-## 5. Web 界面
+## 6. Web 界面
 
 `orbitscope serve` 后在浏览器打开 http://127.0.0.1:8080/ 。
 
@@ -115,7 +182,7 @@ orbitscope serve                                      # Web 服务
 
 `serve` 参数:`--bind 0.0.0.0:8080`(覆盖配置)、`--sim-time <时刻>`(模拟时钟,用于回放旧数据或演示)。
 
-### 5.1 CesiumJS 与离线使用
+### 6.1 CesiumJS 与离线使用
 浏览器端 3D 引擎 CesiumJS 默认从 jsDelivr 加载固定版本(`server.cesium_url`)。
 完全离线时下载后配置 `server.cesium_dir`:
 
@@ -126,14 +193,14 @@ npm pack cesium@1.146.0 && tar -xzf cesium-1.146.0.tgz
 
 Docker 镜像已内置。
 
-### 5.2 对外开放
+### 6.2 对外开放
 默认只监听 `127.0.0.1`。对外开放时:
 - 设置 `bind = "0.0.0.0:8080"`(或放在反向代理之后);
 - 设置环境变量 `ORBITSCOPE_API_TOKEN`(≥ 16 字符)。写接口(修改默认过滤、手动刷新)需要
   `Authorization: Bearer <token>`;未设置 token 时写接口只接受本机请求。读接口与 WebSocket 无需鉴权。
 - 经反向代理(Nginx 等)时需转发 WebSocket(`Upgrade` / `Connection` 头)。
 
-## 6. HTTP API
+## 7. HTTP API
 
 前缀 `/api/v1`,全部为 JSON;错误为 `{"error": "..."}`。
 
@@ -147,6 +214,7 @@ Docker 镜像已内置。
 | GET/PUT | `/filters/default` | 默认过滤条件(PUT 为局部 JSON 合并,写操作) |
 | POST | `/refresh` | 手动触发刷新(写操作;仍遵守数据源最短间隔) |
 | GET | `/client-config` | 前端配置(Cesium 地址等) |
+| GET/PUT | `/settings` | 时刻策略、采集策略、实时/指定时刻(PUT 为写操作:`{"time_policy": "known-at", "collect_mode": "daemon", "time": "live" 或 RFC3339}`) |
 | WS | `/stream` | 实时位置推送 |
 
 列表/统计的过滤查询参数:`alt_min`、`alt_max`、`alt_mode`、`min_size_cm`、`unknown_size`、
@@ -163,10 +231,11 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"alt_max_km": 600}' http://
 WebSocket 协议(订阅消息、元数据消息、二进制位置帧格式)见 [03-design.md](03-design.md) 第 5.3 节;
 Rust 解码实现在 `crates/orbit-server/src/frame.rs`,JavaScript 实现在 `web/js/stream.js`。
 
-## 7. 常见问题
+## 8. 常见问题
 
 | 现象 | 处理 |
 |------|------|
+| `历史库中没有满足条件的数据` | `known-at` 下该时刻早于第一次采集;换用 `--policy nearest-epoch` 或更晚的时刻 |
 | `所有数据源均失败` | 检查网络;`-v` 查看详细日志;离线时先在联网环境运行一次 `orbitscope fetch` |
 | 列表为空 | 检查根数龄期(`--any-age`)、高度与尺寸条件;`orbitscope stats` 查看整体分布 |
 | 浏览器提示无法加载 CesiumJS | 浏览器无法访问 jsDelivr,配置 `server.cesium_dir` 使用本地副本 |

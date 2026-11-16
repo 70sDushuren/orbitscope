@@ -1,0 +1,28 @@
+# 采集策略 daemon:常驻采集进程(不启动 Web 服务)。
+# 配置中设置 [collect] mode = "daemon";Web 服务(如有)只读取本地历史。
+#   sudo cp deploy/linux/orbitscope-collect.service /etc/systemd/system/
+#   sudo systemctl enable --now orbitscope-collect
+# 用户、目录与凭据文件的准备见 orbitscope.service 文件头部。
+[Unit]
+Description=OrbitScope collector (daemon mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=orbitscope
+Group=orbitscope
+Environment=ORBITSCOPE_CONFIG=/etc/orbitscope/config.toml
+Environment=XDG_CACHE_HOME=/var/lib/orbitscope/cache
+Environment=XDG_DATA_HOME=/var/lib/orbitscope/data
+EnvironmentFile=-/etc/orbitscope/env
+ExecStart=/usr/local/bin/orbitscope collect
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/orbitscope
+
+[Install]
+WantedBy=multi-user.target

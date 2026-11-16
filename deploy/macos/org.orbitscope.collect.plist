@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  采集策略 daemon:登录后常驻运行 orbitscope collect(不启动 Web 服务)。
+  配置中设置 [collect] mode = "daemon"。
+    cp deploy/macos/org.orbitscope.collect.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/org.orbitscope.collect.plist
+  启用 Space-Track 时,可在下方 EnvironmentVariables 中提供凭据(以明文保存在该文件中,
+  请确保文件只有本人可读:chmod 600)。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.orbitscope.collect</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/orbitscope</string>
+    <string>collect</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!--
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ORBITSCOPE_SPACETRACK_USER</key><string>账号</string>
+    <key>ORBITSCOPE_SPACETRACK_PASSWORD</key><string>密码</string>
+  </dict>
+  -->
+  <key>StandardOutPath</key><string>/tmp/orbitscope-collect.log</string>
+  <key>StandardErrorPath</key><string>/tmp/orbitscope-collect.log</string>
+</dict>
+</plist>

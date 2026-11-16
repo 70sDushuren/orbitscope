@@ -5,6 +5,10 @@
 [sources]
 cache_dir = "/var/cache/orbitscope"
 
+[archive]
+# 历史归档(根数历史库与完整快照),对应数据卷 /var/lib/orbitscope
+dir = "/var/lib/orbitscope"
+
 [server]
 # 容器内需监听所有地址,端口映射由 docker -p 控制。
 # 未设置 ORBITSCOPE_API_TOKEN 时,写操作(修改默认过滤、手动刷新)只允许容器内本机发起。

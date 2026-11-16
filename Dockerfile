@@ -3,7 +3,7 @@
 # OrbitScope 容器镜像:单一二进制 + 内置 CesiumJS(浏览器端完全离线)。
 #
 #   docker build -t orbitscope .
-#   docker run -p 8080:8080 -v orbitscope-cache:/var/cache/orbitscope orbitscope
+#   docker run -p 8080:8080 -v orbitscope-cache:/var/cache/orbitscope -v orbitscope-data:/var/lib/orbitscope orbitscope
 #
 # Space-Track 凭据通过环境变量传入(不要写进镜像):
 #   docker run -e ORBITSCOPE_SPACETRACK_USER=... -e ORBITSCOPE_SPACETRACK_PASSWORD=... ...
@@ -41,12 +41,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --home-dir /var/cache/orbitscope --shell /usr/sbin/nologin orbitscope \
- && mkdir -p /var/cache/orbitscope && chown orbitscope /var/cache/orbitscope
+ && mkdir -p /var/cache/orbitscope /var/lib/orbitscope \
+ && chown orbitscope /var/cache/orbitscope /var/lib/orbitscope
 COPY --from=build /usr/local/bin/orbitscope /usr/local/bin/orbitscope
 COPY --from=cesium /opt/cesium /opt/cesium
 COPY docker/config.toml /etc/orbitscope/config.toml
 ENV ORBITSCOPE_CONFIG=/etc/orbitscope/config.toml
-VOLUME ["/var/cache/orbitscope"]
+VOLUME ["/var/cache/orbitscope", "/var/lib/orbitscope"]
 EXPOSE 8080
 USER orbitscope
 CMD ["orbitscope", "serve"]

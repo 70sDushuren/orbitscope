@@ -2,6 +2,24 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循语义化版本。
 
+## [0.2.0] - 2026-11-16
+
+### 新增
+- **历史归档(orbit-archive)**:获取数据后不再只保留最新一份。
+  - 根数历史库(SQLite):每组根数(编号 + 历元)只写一次,记录首次获取时间,永不覆盖;记录每次采集。
+  - 完整快照:每次网络下载的原始文件压缩保存,可设最多文件数与空间上限。
+  - 历史库保留控制:可设保留天数与空间上限,每个物体最新一组根数永不删除。
+- **时刻策略**:`known-at`(该时刻已获取到的数据,可复现,默认)、`nearest-epoch`、`latest`;
+  命令行 `--policy`、配置与 Web 界面均可切换;输出注明数据依据,每行带 `fetched_at`。
+- **采集策略**:`serve` / `daemon`(`orbitscope collect`)/ `external`(系统定时任务调用 `fetch`),配置与 Web 界面可切换。
+- 命令行:`collect`、`history status|fetches|object|snapshots|prune`。
+- API:`GET/PUT /api/v1/settings`;`/status` 增加数据依据、设置与最近采集记录。
+- Web 界面:"时间与数据"面板(实时 / 指定时刻、时刻策略、采集策略、数据依据)。
+- 部署:macOS launchd 与 Linux systemd 的三种采集方式示例;Docker 增加数据卷 `/var/lib/orbitscope`。
+
+### 变更
+- 手动刷新在数据未变化时不再增加编目代数(WebSocket 客户端不必重新下载元数据)。
+
 ## [0.1.0] - 2026-11-16
 
 首个版本。

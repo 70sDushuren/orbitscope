@@ -8,6 +8,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - orbitscope-cache:/var/cache/orbitscope
+      - orbitscope-data:/var/lib/orbitscope     # 历史归档:根数历史库与完整快照
     environment:
       # 启用 Space-Track 时:在同目录 .env 文件中设置这两个变量,并挂载开启了
       # [sources.spacetrack] enabled = true 的配置文件
@@ -18,3 +19,4 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
 volumes:
   orbitscope-cache:
+  orbitscope-data:

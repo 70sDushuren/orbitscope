@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  采集策略 serve:登录后自动启动 Web 服务(同时负责采集)。
+    cp deploy/macos/org.orbitscope.serve.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/org.orbitscope.serve.plist
+  可执行文件路径按实际安装位置修改(Apple 芯片的 Homebrew 为 /opt/homebrew/bin)。
+  日志:/tmp/orbitscope-serve.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.orbitscope.serve</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/orbitscope</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/orbitscope-serve.log</string>
+  <key>StandardErrorPath</key><string>/tmp/orbitscope-serve.log</string>
+</dict>
+</plist>

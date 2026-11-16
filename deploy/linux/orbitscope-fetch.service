@@ -1,0 +1,21 @@
+# 采集策略 external:由 orbitscope-fetch.timer 定时触发的一次性采集。
+# 配置中设置 [collect] mode = "external"。
+[Unit]
+Description=OrbitScope one-shot fetch (external mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=orbitscope
+Group=orbitscope
+Environment=ORBITSCOPE_CONFIG=/etc/orbitscope/config.toml
+Environment=XDG_CACHE_HOME=/var/lib/orbitscope/cache
+Environment=XDG_DATA_HOME=/var/lib/orbitscope/data
+EnvironmentFile=-/etc/orbitscope/env
+ExecStart=/usr/local/bin/orbitscope --quiet fetch
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/orbitscope

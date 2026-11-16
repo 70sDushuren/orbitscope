@@ -1,0 +1,14 @@
+# 每小时在 17–27 分之间运行一次 orbitscope fetch(避开整点与半点,符合 Space-Track 规定)。
+# 实际是否联网仍由各数据源的最短刷新间隔决定。
+#   sudo cp deploy/linux/orbitscope-fetch.{service,timer} /etc/systemd/system/
+#   sudo systemctl enable --now orbitscope-fetch.timer
+[Unit]
+Description=Hourly OrbitScope fetch
+
+[Timer]
+OnCalendar=*-*-* *:17:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

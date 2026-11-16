@@ -7,7 +7,9 @@
   磁盘缓存,严格遵守数据源的频率规定,支持离线运行
 - **计算**:SGP4/SDP4 外推,3 万个物体全量外推约 8 ms(4 核)
 - **过滤**:高度(轨道区间或瞬时高度)、尺寸(基于 RCS 估算)、类型、国家、倾角、名称/编号搜索
-- **展示**:CesiumJS 3D 地球(实时点云、轨道线、统计)、命令行(表格 / JSON / CSV)、REST + WebSocket API
+- **历史归档**:每组根数只写一次并记录获取时间,永不覆盖;另存有容量上限的原始快照;
+  指定任意时刻按"当时已获取的数据"复现展示;三种采集方式(Web 服务 / 常驻进程 / 系统定时任务)
+- **展示**:CesiumJS 3D 地球(实时点云、轨道线、统计、时间回放)、命令行(表格 / JSON / CSV)、REST + WebSocket API
 
 ## 快速开始
 
@@ -30,6 +32,8 @@ orbitscope list --alt 400..450 --type debris --sort alt
 orbitscope show 25544 --track 90m --step 5m
 orbitscope export -f csv -o leo.csv
 orbitscope stats --bin 100
+orbitscope history status                         # 历史归档占用
+orbitscope --policy known-at list --at 2026-11-16T08:00:00Z   # 复现某时刻的数据
 ```
 
 启用 Space-Track:配置 `[sources.spacetrack] enabled = true`,并设置环境变量
@@ -54,6 +58,7 @@ orbitscope stats --bin 100
 ```
 crates/orbit-core     核心计算(解析、外推、坐标、尺寸、过滤),无 IO
 crates/orbit-sources  数据源、缓存、限速
+crates/orbit-archive  历史归档(SQLite 根数历史库、完整快照、时刻策略)
 crates/orbit-server   REST + WebSocket 服务,内嵌前端
 crates/orbitscope     命令行程序
 web/                  浏览器前端(原生 ES Module)

@@ -1,8 +1,8 @@
-# systemd 服务示例:
+# systemd 服务示例(采集策略 serve:Web 服务同时负责采集):
 #   sudo cp target/release/orbitscope /usr/local/bin/
 #   sudo useradd --system --home-dir /var/lib/orbitscope --create-home orbitscope
 #   sudo mkdir -p /etc/orbitscope && sudo cp config/orbitscope.example.toml /etc/orbitscope/config.toml
-#   sudo cp deploy/orbitscope.service /etc/systemd/system/ && sudo systemctl enable --now orbitscope
+#   sudo cp deploy/linux/orbitscope.service /etc/systemd/system/ && sudo systemctl enable --now orbitscope
 # 凭据放在 /etc/orbitscope/env(权限 600),内容如:
 #   ORBITSCOPE_SPACETRACK_USER=...
 #   ORBITSCOPE_SPACETRACK_PASSWORD=...
@@ -16,6 +16,7 @@ User=orbitscope
 Group=orbitscope
 Environment=ORBITSCOPE_CONFIG=/etc/orbitscope/config.toml
 Environment=XDG_CACHE_HOME=/var/lib/orbitscope/cache
+Environment=XDG_DATA_HOME=/var/lib/orbitscope/data
 EnvironmentFile=-/etc/orbitscope/env
 ExecStart=/usr/local/bin/orbitscope serve
 Restart=on-failure
