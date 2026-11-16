@@ -1,0 +1,25 @@
+[package]
+name = "orbit-core"
+description = "OrbitScope 核心计算库:GP 根数解析、SGP4 外推、坐标转换、尺寸估算与过滤(无 IO)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sgp4.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "propagate"
+harness = false
+
+[lints]
+workspace = true

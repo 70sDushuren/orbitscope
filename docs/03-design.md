@@ -32,8 +32,8 @@ orbitscope/
 ├── Cargo.toml                 # workspace
 ├── crates/
 │   ├── orbit-core/            # 纯计算库,无 IO、无 async
-│   │   └── src/{model.rs, omm.rs, tle.rs, propagate.rs, frames.rs,
-│   │            elements.rs, size.rs, filter.rs, catalog.rs, time.rs}
+│   │   └── src/{model.rs, omm.rs, tle.rs, propagate.rs, frames.rs, elements.rs,
+│   │            size.rs, filter.rs, catalog.rs, stats.rs, time.rs, error.rs}
 │   ├── orbit-sources/         # 数据源 + 缓存 + 限速(async, reqwest)
 │   │   └── src/{lib.rs, celestrak.rs, spacetrack.rs, file.rs, cache.rs,
 │   │            satcat.rs, merge.rs, ratelimit.rs}
@@ -251,3 +251,5 @@ tick_ms = 1000
 | 006 | 前端 CesiumJS + 离线影像 | three.js / globe.gl / MapLibre | 内建地球、相机、时间系统与大量点渲染;离线影像免 token |
 | 007 | 尺寸 = RCS 等效直径估算,区间化 | 只用分档 / 忽略尺寸 | 公开数据只有 RCS;区间化可诚实表达不确定性 |
 | 008 | 默认数据源 CelesTrak,Space-Track 可选 | 只用 Space-Track | 免注册即可开箱运行;需要全量碎片时再配账号 |
+| 009 | SGP4 使用 sgp4 crate 默认(改进)模式 | AFSPC 兼容模式 | crate 推荐;与 AFSPC 参考向量差异仅数十米,远小于 SGP4 的 km 级误差 |
+| 010 | 根数龄期过滤放在 `Filter`(运行时可调),编目构建只剔除已再入与非法根数 | 构建时剔除过期根数 | 修改龄期阈值无需重建编目 |

@@ -33,6 +33,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p orbitscope -- serve --config config/orbitscope.example.toml
 cargo bench -p orbit-core
+cargo run -p orbit-core --example demo -- testdata/spacetrack_gp.json 2024-01-01T12:30:00Z
 ```
 
 ## 编码约定
@@ -44,6 +45,8 @@ cargo bench -p orbit-core
 - 坐标系:SGP4 输出 TEME → GMST 旋转得 ECEF → WGS84 大地坐标。函数名标明坐标系,如 `teme_to_ecef`。
 - 单个物体解析/外推失败只计数并记录日志,绝不中断整批处理。
 - 尺寸始终是"估算",对外数据必须带 `size_source` 字段。
+- 测试中允许 `unwrap()`(见 `clippy.toml`);引用文献参考值的测试模块可 `allow(clippy::inconsistent_digit_grouping)`。
+- SGP4 使用 sgp4 crate 的默认(改进)模式,而非 AFSPC 兼容模式(差异数十米,见 ADR-009)。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
 ## 数据源规则(必须遵守)
@@ -58,7 +61,7 @@ cargo bench -p orbit-core
 ## 当前进度
 
 - [x] M0 规划文档
-- [ ] M1 orbit-core
+- [x] M1 orbit-core(44 个测试;基准:3 万物体单线程 ~30 ms,4 核并行 ~8 ms)
 - [ ] M2 orbit-sources
 - [ ] M3 CLI
 - [ ] M4 orbit-server
