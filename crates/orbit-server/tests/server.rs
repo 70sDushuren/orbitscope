@@ -412,3 +412,90 @@ async fn shutdown_closes_open_websockets() {
     // 有打开的 WS 连接时也必须能在超时内关闭
     s.stop().await;
 }
+
+#[tokio::test]
+async fn web_frontend_and_client_config() {
+    let s = TestServer::start(|_| {}).await;
+    let r = s.client.get(s.url("/")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        r.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert!(r.text().await.unwrap().contains("js/main.js"));
+    for (path, ctype) in [
+        ("/js/main.js", "text/javascript"),
+        ("/js/stream.js", "text/javascript"),
+        ("/css/app.css", "text/css"),
+    ] {
+        let r = s.client.get(s.url(path)).send().await.unwrap();
+        assert_eq!(r.status(), 200, "{path}");
+        assert!(
+            r.headers()["content-type"].to_str().unwrap().starts_with(ctype),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        s.client
+            .get(s.url("/no-such-file.js"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let (code, v) = s.get("/api/v1/no-such-endpoint").await;
+    assert_eq!(code, 404);
+    assert!(v["error"].is_string());
+
+    let (_, cfg) = s.get("/api/v1/client-config").await;
+    assert_eq!(cfg["cesium_base_url"], orbit_server::DEFAULT_CESIUM_URL);
+    assert_eq!(cfg["tick_ms"], 100);
+    // 未配置本地目录时不提供 /cesium/
+    assert_eq!(
+        s.client
+            .get(s.url("/cesium/Cesium.js"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn local_cesium_dir_is_served() {
+    let cesium = tempfile::tempdir().unwrap();
+    std::fs::write(cesium.path().join("Cesium.js"), "/* fake cesium */").unwrap();
+    std::fs::create_dir_all(cesium.path().join("Widgets")).unwrap();
+    std::fs::write(cesium.path().join("Widgets/widgets.css"), "body{}").unwrap();
+    let dir = cesium.path().to_path_buf();
+    let s = TestServer::start(move |o| o.cesium_dir = Some(dir)).await;
+    let (_, cfg) = s.get("/api/v1/client-config").await;
+    assert_eq!(cfg["cesium_base_url"], "/cesium/");
+    let r = s.client.get(s.url("/cesium/Cesium.js")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "/* fake cesium */");
+    assert_eq!(
+        s.client
+            .get(s.url("/cesium/Widgets/widgets.css"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        s.client
+            .get(s.url("/cesium/../Cargo.toml"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    s.stop().await;
+}

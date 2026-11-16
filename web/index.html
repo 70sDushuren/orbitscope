@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OrbitScope</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%233987e5'/%3E%3Cellipse cx='16' cy='16' rx='14' ry='5' fill='none' stroke='%23d95926' stroke-width='2' transform='rotate(-25 16 16)'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="globe" aria-label="3D 地球视图"></div>
+
+<header id="topbar">
+  <div class="brand">OrbitScope</div>
+  <div class="status" id="status">
+    <span class="stat"><span class="label">时间 (UTC)</span><span id="st-time">--</span></span>
+    <span class="stat"><span class="label">显示</span><span id="st-shown">--</span></span>
+    <span class="stat"><span class="label">编目</span><span id="st-catalog">--</span></span>
+    <span class="stat" id="st-conn-wrap"><span class="dot" id="st-conn-dot"></span><span id="st-conn">连接中</span></span>
+  </div>
+  <div class="bar-buttons">
+    <button type="button" id="btn-toggle-left" aria-controls="left" aria-expanded="true">面板</button>
+  </div>
+</header>
+
+<aside id="left" class="panel" aria-label="过滤与统计">
+  <section>
+    <h2>过滤</h2>
+    <form id="filter-form" autocomplete="off">
+      <div class="row">
+        <label>高度下限 km<input type="number" name="alt_min_km" step="10" min="0" required></label>
+        <label>高度上限 km<input type="number" name="alt_max_km" step="10" min="0" required></label>
+      </div>
+      <label>高度判据
+        <select name="altitude_mode">
+          <option value="orbit-overlap">轨道与范围有交集</option>
+          <option value="orbit-within">轨道完全在范围内</option>
+          <option value="instantaneous">此刻高度在范围内</option>
+        </select>
+      </label>
+      <div class="row">
+        <label>最小尺寸 cm<input type="number" name="min_size_cm" step="1" min="0" required></label>
+        <label>根数龄期 ≤ 天<input type="number" name="max_epoch_age_days" step="1" min="0" placeholder="不限"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="unknown_include"> 包含尺寸无法判定的物体</label>
+      <fieldset>
+        <legend>类型</legend>
+        <div id="type-checks" class="type-checks"></div>
+      </fieldset>
+      <label>国家/所有者(逗号分隔,空为全部)<input type="text" name="countries" placeholder="如 US, PRC, CIS"></label>
+      <p class="hint" id="filter-error" role="alert"></p>
+      <div class="buttons">
+        <button type="submit" class="primary">应用</button>
+        <button type="button" id="btn-reset">恢复默认</button>
+      </div>
+    </form>
+  </section>
+
+  <section>
+    <h2>搜索</h2>
+    <input type="search" id="search" placeholder="名称 / NORAD 编号 / 国际编号" aria-label="搜索物体">
+    <ul id="search-results" class="results"></ul>
+  </section>
+
+  <section>
+    <h2>统计 <span class="muted" id="stats-total"></span></h2>
+    <div id="type-bars" class="type-bars"></div>
+    <h3>平均高度分布(每 <span id="hist-bin">50</span> km)</h3>
+    <div id="histogram" class="histogram"></div>
+    <details>
+      <summary>数据表</summary>
+      <table id="hist-table" class="table"><thead><tr><th>高度区间 km</th><th>数量</th></tr></thead><tbody></tbody></table>
+    </details>
+  </section>
+
+  <section>
+    <h2>数据源</h2>
+    <ul id="sources" class="sources"></ul>
+    <p class="muted small" id="refresh-info"></p>
+  </section>
+  <p class="muted small footnote">尺寸为雷达截面积(RCS)推算的等效直径估算值;公开编目在近地轨道的门限约 10 cm。</p>
+</aside>
+
+<aside id="right" class="panel" hidden aria-label="物体详情">
+  <div class="panel-head">
+    <h2 id="d-name">--</h2>
+    <button type="button" id="btn-close" aria-label="关闭详情">✕</button>
+  </div>
+  <div class="type-tag" id="d-type"></div>
+  <dl class="kv" id="d-live">
+    <dt>纬度 / 经度</dt><dd id="d-latlon">--</dd>
+    <dt>高度</dt><dd id="d-alt">--</dd>
+    <dt>速度</dt><dd id="d-speed">--</dd>
+  </dl>
+  <dl class="kv" id="d-static"></dl>
+  <div class="buttons">
+    <button type="button" id="btn-fly">飞到物体</button>
+    <button type="button" id="btn-track" aria-pressed="true">轨道线</button>
+  </div>
+</aside>
+
+<div id="tooltip" role="tooltip" hidden></div>
+<div id="loading">正在加载 3D 引擎…</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

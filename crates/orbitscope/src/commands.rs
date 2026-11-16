@@ -507,6 +507,18 @@ pub async fn serve(ctx: &Ctx, opts: ServeOpts) -> Result<()> {
         sources_cfg.spacetrack.enabled = false;
     }
     let sources = SourceSet::from_config(&sources_cfg, Credentials::from_env())?;
+    let mut cesium_base_url = cfg.server.cesium_url.trim().to_string();
+    if !cesium_base_url.ends_with('/') {
+        cesium_base_url.push('/');
+    }
+    if let Some(dir) = &cfg.server.cesium_dir
+        && !dir.join("Cesium.js").is_file()
+    {
+        bail!(
+            "server.cesium_dir 中找不到 Cesium.js: {}(应指向 Build/Cesium 目录)",
+            dir.display()
+        );
+    }
     let options = orbit_server::ServerOptions {
         bind,
         tick: std::time::Duration::from_millis(cfg.server.tick_ms),
@@ -515,6 +527,8 @@ pub async fn serve(ctx: &Ctx, opts: ServeOpts) -> Result<()> {
         default_filter: cfg.filter.clone(),
         time_offset,
         refresh_minute: None,
+        cesium_base_url,
+        cesium_dir: cfg.server.cesium_dir.clone(),
     };
     eprintln!("OrbitScope 服务启动中:http://{bind}/");
     if !time_offset.is_zero() {

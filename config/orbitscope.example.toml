@@ -70,3 +70,9 @@ bind = "127.0.0.1:8080"
 tick_ms = 1000
 # WebSocket 最大连接数
 max_ws_clients = 64
+# 浏览器从这里加载 CesiumJS(3D 地球引擎),需要浏览器能访问互联网
+cesium_url = "https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/"
+# 完全离线:下载 CesiumJS 后指向其 Build/Cesium 目录(含 Cesium.js),例如
+#   npm pack cesium@1.146.0 && tar -xzf cesium-1.146.0.tgz
+#   cesium_dir = "/opt/cesium/package/Build/Cesium"
+# cesium_dir = ""

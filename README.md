@@ -7,7 +7,7 @@
 - 过滤:高度范围(默认 100–1000 km)、最小尺寸(默认 10 cm,基于 RCS 估算)、类型、国家、搜索
 - 展示:Web 3D 地球(CesiumJS)、列表、详情与轨迹、统计;CLI 与 REST/WebSocket API
 
-> 状态:M1 核心计算库、M2 数据源层、M3 命令行工具、M4 Web 服务已完成;3D 前端(M5)开发中。见 [docs/](docs/)。
+> 状态:M1–M5 已完成(核心库、数据源、命令行、Web 服务、3D 前端);M6 打包发布进行中。见 [docs/](docs/)。
 
 ## 快速开始
 
@@ -22,11 +22,18 @@ cargo build --release
 ./target/release/orbitscope export -f csv -o leo.csv
 ./target/release/orbitscope stats --bin 100
 ./target/release/orbitscope --offline list        # 只用缓存
-./target/release/orbitscope serve                 # Web 服务:http://127.0.0.1:8080/(REST + WebSocket)
+./target/release/orbitscope serve                 # 浏览器打开 http://127.0.0.1:8080/ 查看 3D 地球
 ```
 
 启用 Space-Track(完整编目,含全部碎片):在配置中设 `[sources.spacetrack] enabled = true`,并设置环境变量
 `ORBITSCOPE_SPACETRACK_USER` / `ORBITSCOPE_SPACETRACK_PASSWORD`。
+
+浏览器端的 3D 引擎 CesiumJS 默认从 jsDelivr CDN 加载。完全离线使用时:
+
+```bash
+npm pack cesium@1.146.0 && tar -xzf cesium-1.146.0.tgz      # 得到 package/Build/Cesium
+# 在配置 [server] 中设置 cesium_dir = "/绝对路径/package/Build/Cesium"
+```
 
 ## 文档
 

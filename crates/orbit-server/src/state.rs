@@ -26,7 +26,14 @@ pub struct ServerOptions {
     pub time_offset: chrono::Duration,
     /// 每小时的刷新分钟(0–59);`None` 时随机选取,避开整点与半点
     pub refresh_minute: Option<u32>,
+    /// 前端加载 CesiumJS 的基础 URL(以 `/` 结尾);设置了 `cesium_dir` 时被忽略
+    pub cesium_base_url: String,
+    /// 本地 CesiumJS `Build/Cesium` 目录;设置后以 `/cesium/` 提供,前端可完全离线
+    pub cesium_dir: Option<std::path::PathBuf>,
 }
+
+/// 默认从 jsDelivr 加载的 CesiumJS 版本。
+pub const DEFAULT_CESIUM_URL: &str = "https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/";
 
 impl Default for ServerOptions {
     fn default() -> Self {
@@ -38,6 +45,8 @@ impl Default for ServerOptions {
             default_filter: Filter::default(),
             time_offset: chrono::Duration::zero(),
             refresh_minute: None,
+            cesium_base_url: DEFAULT_CESIUM_URL.to_string(),
+            cesium_dir: None,
         }
     }
 }

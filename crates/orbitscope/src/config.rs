@@ -24,6 +24,10 @@ pub struct ServerConfig {
     pub bind: String,
     pub tick_ms: u64,
     pub max_ws_clients: usize,
+    /// 前端加载 CesiumJS 的地址(以 / 结尾)
+    pub cesium_url: String,
+    /// 本地 CesiumJS `Build/Cesium` 目录;设置后前端可完全离线
+    pub cesium_dir: Option<PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -32,6 +36,8 @@ impl Default for ServerConfig {
             bind: "127.0.0.1:8080".into(),
             tick_ms: 1_000,
             max_ws_clients: 64,
+            cesium_url: orbit_server::DEFAULT_CESIUM_URL.to_string(),
+            cesium_dir: None,
         }
     }
 }

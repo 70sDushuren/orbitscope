@@ -1,0 +1,152 @@
+/* OrbitScope 前端样式。界面固定为深色(太空场景),颜色以角色令牌定义。 */
+:root {
+  color-scheme: dark;
+  --surface-0: #0b0d12;
+  --surface-1: #1a1a19;            /* 面板与图表表面(调色板校验所用表面) */
+  --surface-1-a: rgba(26, 26, 25, 0.9);
+  --surface-2: #262624;
+  --line: #383835;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8f8e86;
+  --accent: #3987e5;
+  --danger: #e66767;
+  --good: #0ca30c;
+  --warning: #fab219;
+  /* 物体类型:分类调色板前 3 槽(深色)+ 中性灰;已用 validate_palette.js --pairs all 校验 */
+  --type-payload: #3987e5;
+  --type-rocket: #d95926;
+  --type-debris: #199e70;
+  --type-unknown: #9a998f;
+  --radius: 8px;
+  --font: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--surface-0); color: var(--text-primary); font: 14px/1.5 var(--font); }
+button, input, select { font: inherit; color: inherit; }
+
+#globe { position: fixed; inset: 0; }
+#loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--text-secondary); pointer-events: none; }
+#loading.error { color: var(--danger); pointer-events: auto; padding: 16px; text-align: center; }
+#loading[hidden] { display: none; }
+
+/* Cesium 自带控件的位置微调 */
+.cesium-viewer-toolbar { top: auto !important; bottom: 40px; right: 8px !important; }
+.cesium-viewer-bottom { left: auto !important; right: 8px; }
+
+#topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 10;
+  display: flex; align-items: center; gap: 16px; padding: 0 12px;
+  background: var(--surface-1-a); border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.brand { font-weight: 650; letter-spacing: 0.02em; white-space: nowrap; }
+.status { display: flex; gap: 16px; overflow-x: auto; flex: 1; scrollbar-width: none; }
+.stat { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stat .label { color: var(--text-muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.dot.ok { background: var(--good); }
+.dot.warn { background: var(--warning); }
+.dot.bad { background: var(--danger); }
+.bar-buttons { display: flex; gap: 8px; }
+
+.panel {
+  position: fixed; top: 56px; bottom: 32px; z-index: 9; width: 320px; overflow-y: auto;
+  background: var(--surface-1-a); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 14px; backdrop-filter: blur(6px);
+}
+#left { left: 8px; }
+#right { right: 8px; bottom: auto; max-height: calc(100% - 96px); }
+.panel[hidden] { display: none; }
+.panel section + section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+h2 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
+h3 { font-size: 13px; margin: 12px 0 6px; font-weight: 500; color: var(--text-secondary); }
+.muted { color: var(--text-muted); font-weight: 400; }
+.small { font-size: 12px; }
+.footnote { margin-top: 14px; }
+
+label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 12px; }
+label input, label select { display: block; width: 100%; margin-top: 3px; }
+input[type=number], input[type=text], input[type=search], select {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; color: var(--text-primary);
+}
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+label.check { display: flex; gap: 6px; align-items: center; color: var(--text-primary); font-size: 13px; }
+label.check input { width: auto; margin: 0; }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 8px; padding: 6px 8px; }
+legend { color: var(--text-secondary); font-size: 12px; padding: 0 4px; }
+.type-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+.type-checks label { margin: 0; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.hint { color: var(--danger); min-height: 1em; margin: 0 0 6px; font-size: 12px; }
+
+button {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--text-muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button[aria-pressed="false"] { color: var(--text-muted); }
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.results { list-style: none; margin: 6px 0 0; padding: 0; }
+.results li button {
+  width: 100%; display: flex; gap: 8px; align-items: center; text-align: left;
+  background: none; border: 0; border-radius: 4px; padding: 4px 6px;
+}
+.results li button:hover { background: var(--surface-2); }
+.results .id { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-left: auto; }
+
+/* 统计:类型条形 */
+.type-bars { display: grid; gap: 6px; }
+.tb-row { display: grid; grid-template-columns: 74px 1fr 52px; gap: 8px; align-items: center; font-size: 12px; }
+.tb-name { display: flex; gap: 6px; align-items: center; color: var(--text-secondary); }
+.tb-track { height: 10px; }
+.tb-fill { height: 100%; border-radius: 0 4px 4px 0; min-width: 2px; }
+.tb-val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 统计:高度直方图(SVG) */
+.histogram { position: relative; }
+.histogram svg { display: block; width: 100%; height: auto; }
+.histogram .bar { fill: var(--accent); }
+.histogram .bar.hover { fill: #6da7ec; }
+.histogram .axis { fill: var(--text-muted); font-size: 10px; font-family: var(--font); }
+.histogram .baseline { stroke: var(--line); stroke-width: 1; }
+.table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.table th, .table td { text-align: right; padding: 2px 6px; border-bottom: 1px solid var(--line); }
+.table th:first-child, .table td:first-child { text-align: left; }
+details { margin-top: 6px; }
+summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+
+.sources { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.sources li { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+.sources .dot { position: relative; top: 1px; }
+
+/* 详情面板 */
+.panel-head { display: flex; align-items: flex-start; gap: 8px; }
+.panel-head h2 { flex: 1; margin: 0; word-break: break-word; }
+#btn-close { padding: 2px 8px; }
+.type-tag { display: inline-flex; align-items: center; gap: 6px; margin: 6px 0 10px; font-size: 12px; color: var(--text-secondary); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0 0 10px; font-size: 13px; }
+.kv dt { color: var(--text-muted); }
+.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+#d-live { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+
+#tooltip {
+  position: fixed; z-index: 20; pointer-events: none; padding: 4px 8px; border-radius: 6px; font-size: 12px;
+  background: var(--surface-1); border: 1px solid var(--line); color: var(--text-primary); white-space: nowrap;
+}
+#tooltip[hidden] { display: none; }
+
+/* 窄屏:面板变为底部抽屉,详情覆盖在上方 */
+@media (max-width: 720px) {
+  #topbar { gap: 10px; padding: 0 10px; }
+  .status { gap: 10px; }
+  .stat .label { display: none; }
+  .panel { left: 8px; right: 8px; width: auto; }
+  #left { top: auto; bottom: 8px; max-height: 60vh; }
+  #right { top: auto; bottom: 8px; max-height: 60vh; }
+  .cesium-viewer-toolbar { display: none; }
+}

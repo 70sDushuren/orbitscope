@@ -10,9 +10,10 @@ pub mod frame;
 pub mod query;
 pub mod scheduler;
 pub mod state;
+pub mod web;
 pub mod ws;
 
-pub use state::{AppState, ServerOptions};
+pub use state::{AppState, DEFAULT_CESIUM_URL, ServerOptions};
 
 use orbit_sources::{FetchMode, SourceSet};
 use std::future::Future;

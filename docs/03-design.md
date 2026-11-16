@@ -247,11 +247,31 @@ impl FetchAllResult {
 
 ## 6. 前端设计(web/)
 
-- **CesiumJS**,使用 `TileMapServiceImageryProvider` 加载其自带的 NaturalEarthII 离线影像 → 无需 ion token、可离线。
-- 物体渲染:`PointPrimitiveCollection`(2–3 万点性能良好);颜色:载荷 绿、火箭体 橙、碎片 红、未知 灰。
-- 选中物体:Polyline 显示 ±1 个周期轨道线 + 地面轨迹;信息面板显示详情。
-- 面板:过滤(高度双滑块、尺寸、类型复选、搜索框)、统计(计数 + 高度直方图)、状态栏。
-- 构建:原生 ES Module + 少量 TypeScript(可选 esbuild),产物由 `rust-embed` 打包进二进制;开发模式从磁盘读取。
+无构建步骤:原生 ES Module(`web/js/*.js`)+ 一个 CSS 文件,由 rust-embed 编译进二进制
+(debug 构建直接读磁盘,改前端无需重编译)。
+
+| 文件 | 职责 |
+|------|------|
+| `index.html` / `css/app.css` | 布局:顶部状态栏、左侧过滤/搜索/统计/数据源面板、右侧详情面板;深色界面;≤ 720 px 时面板变为底部抽屉且互斥 |
+| `js/main.js` | 启动:读 `/api/v1/client-config` 与默认过滤 → 加载 Cesium → 连接 WS → 订阅;交互绑定 |
+| `js/globe.js` | Cesium Viewer(NaturalEarthII 离线影像,不用 Cesium ion)、`PointPrimitiveCollection` 点云、两帧之间线性插值(显示滞后一帧)、拾取、轨道线 |
+| `js/stream.js` | WS 连接、指数退避重连、断线后自动重新订阅、OSF1 帧解码 |
+| `js/filter.js` | 表单 ⇄ Filter JSON(WS)⇄ REST 查询串;过滤条件存 localStorage |
+| `js/panels.js` | 类型条形、平均高度直方图(SVG,悬停提示 + 数据表)、数据源状态、详情 |
+| `js/api.js` | REST 封装 |
+
+- **CesiumJS 来源**:默认从 jsDelivr 加载固定版本 1.146.0(`server.cesium_url`);
+  设置 `server.cesium_dir` 指向本地 `Build/Cesium` 目录时由服务端以 `/cesium/` 提供,前端完全离线。
+- **颜色**:载荷 / 火箭体 / 碎片 使用分类调色板前 3 槽(深色 `#3987e5` / `#d95926` / `#199e70`),
+  未知为中性灰;已用 dataviz 校验脚本按"所有配对"(散点场景)验证色觉障碍区分度与对比度。
+  颜色同时出现在复选框、统计条形与地球点云上,文字始终使用文本色。
+- **详情**:点击点或搜索结果 → `/objects/{id}` + `/objects/{id}/track`(一个周期,30 s 步长);
+  地固系空间轨迹(实线)+ 星下点轨迹(虚线);实时经纬高由当前插值位置计算;不在订阅集合中的物体每 2 s 轮询。
+- **点大小**:3 px,按相机距离放大(1500 km 处 2 倍),选中时 8 px + 白色描边。
+- **调试**:`window.orbitscope = { globe, stream, state }`;`state.lastFrameMs` / `lastCatalogMs` 为最近处理耗时。
+
+实测(2 万个合成物体、默认过滤后显示 14,182 个,无头 Chromium):处理 catalog 消息 ~17 ms,
+应用一帧 < 7 ms,每次渲染前插值 1–5 ms,帧大小 227 KB。
 
 ## 7. 配置
 
@@ -305,6 +325,7 @@ tick_ms = 1000
 | 004 | Catalog 不可变快照 + ArcSwap | `RwLock<Catalog>` | 读多写少,读路径无锁 |
 | 005 | WS 二进制帧,ECEF f32 | JSON、经纬高 | 体积小(16B/物体),前端无需再转换;f32 在 7000 km 量级精度约 0.5 m,足够 |
 | 006 | 前端 CesiumJS + 离线影像 | three.js / globe.gl / MapLibre | 内建地球、相机、时间系统与大量点渲染;离线影像免 token |
+| 015 | 前端不引入构建工具,CesiumJS 默认走 CDN、可配置本地目录 | npm + 打包器;把 Cesium(23 MB)编进二进制 | 保持单一 Rust 工具链;二进制保持小巧;离线场景用 `cesium_dir` 满足 |
 | 007 | 尺寸 = RCS 等效直径估算,区间化 | 只用分档 / 忽略尺寸 | 公开数据只有 RCS;区间化可诚实表达不确定性 |
 | 008 | 默认数据源 CelesTrak,Space-Track 可选 | 只用 Space-Track | 免注册即可开箱运行;需要全量碎片时再配账号 |
 | 009 | SGP4 使用 sgp4 crate 默认(改进)模式 | AFSPC 兼容模式 | crate 推荐;与 AFSPC 参考向量差异仅数十米,远小于 SGP4 的 km 级误差 |

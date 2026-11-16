@@ -6,7 +6,7 @@ use crate::ws::{ClientGuard, handle_socket};
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
@@ -56,7 +56,6 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/", get(index))
         .route("/api/v1/status", get(status))
         .route(
             "/api/v1/filters/default",
@@ -68,6 +67,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/stats", get(stats))
         .route("/api/v1/refresh", post(refresh))
         .route("/api/v1/stream", get(stream))
+        .route("/api/v1/client-config", get(client_config))
+        .merge(crate::web::routes(&state.options))
         .with_state(state)
 }
 
@@ -111,8 +112,26 @@ fn check_write(state: &AppState, headers: &HeaderMap, peer: SocketAddr) -> Resul
 
 // ------------------------------------------------------------------ handlers
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("index.html"))
+#[derive(Serialize)]
+struct ClientConfig {
+    version: &'static str,
+    cesium_base_url: String,
+    tick_ms: u64,
+    max_rate_hz: f64,
+}
+
+async fn client_config(State(state): State<Arc<AppState>>) -> Json<ClientConfig> {
+    let cesium_base_url = if state.options.cesium_dir.is_some() {
+        "/cesium/".to_string()
+    } else {
+        state.options.cesium_base_url.clone()
+    };
+    Json(ClientConfig {
+        version: env!("CARGO_PKG_VERSION"),
+        cesium_base_url,
+        tick_ms: state.options.tick.as_millis() as u64,
+        max_rate_hz: crate::ws::MAX_RATE_HZ,
+    })
 }
 
 #[derive(Serialize)]
