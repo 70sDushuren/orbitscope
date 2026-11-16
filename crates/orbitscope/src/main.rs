@@ -29,6 +29,11 @@ struct Cli {
     quiet: bool,
 
     /// 日志详细程度(-v、-vv);也可用 RUST_LOG
+    /// 指定时刻时的时刻策略:known-at(该时刻已获取到的数据)、nearest-epoch(历元最接近)、latest(最新);
+    /// 默认取配置 [archive] time_policy
+    #[arg(long, global = true, value_name = "POLICY")]
+    policy: Option<String>,
+
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     verbose: u8,
 
@@ -115,11 +120,50 @@ enum Command {
         sim_time: Option<String>,
     },
 
+    /// 常驻采集:不启动 Web 服务,定期获取数据并写入历史归档(采集策略 daemon)
+    Collect {
+        /// 只采集一次后退出(等同 fetch,适合系统定时任务)
+        #[arg(long)]
+        once: bool,
+    },
+
+    /// 历史归档:占用状态、采集记录、物体历史根数、完整快照、手动清理
+    History {
+        #[command(subcommand)]
+        action: HistoryAction,
+        #[arg(short, long, value_enum, default_value = "table", global = true)]
+        format: Format,
+    },
+
     /// 配置文件管理
     Config {
         #[command(subcommand)]
         action: ConfigAction,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum HistoryAction {
+    /// 归档目录、历史库与快照的占用及上限
+    Status,
+    /// 最近的采集记录
+    Fetches {
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// 某物体的历史根数
+    Object {
+        norad_id: u32,
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// 最近的完整快照
+    Snapshots {
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// 按保留设置立即清理
+    Prune,
 }
 
 #[derive(Debug, Subcommand)]
@@ -180,10 +224,27 @@ async fn run(cli: Cli) -> Result<()> {
         config_path: loaded.path,
         offline: cli.offline,
         quiet: cli.quiet,
+        policy: cli
+            .policy
+            .as_deref()
+            .map(str::parse::<orbit_archive::TimePolicy>)
+            .transpose()
+            .map_err(|e| anyhow::anyhow!(e))?,
     };
 
     match cli.command {
         Command::Fetch => commands::fetch(&ctx).await,
+        Command::Collect { once } => commands::collect(&ctx, once).await,
+        Command::History { action, format } => {
+            let cmd = match action {
+                HistoryAction::Status => commands::HistoryCmd::Status,
+                HistoryAction::Fetches { limit } => commands::HistoryCmd::Fetches(limit),
+                HistoryAction::Object { norad_id, limit } => commands::HistoryCmd::Object(norad_id, limit),
+                HistoryAction::Snapshots { limit } => commands::HistoryCmd::Snapshots(limit),
+                HistoryAction::Prune => commands::HistoryCmd::Prune,
+            };
+            commands::history(&ctx, cmd, format).await
+        }
         Command::List {
             filter,
             at,

@@ -294,6 +294,7 @@ fn build_object(rec: GpRecord) -> Result<(SpaceObject, sgp4::Constants), (NoradI
         epoch: rec.epoch(),
         derived,
         source: rec.source,
+        fetched_at: rec.fetched_at,
         meta: rec.meta,
         elements: rec.elements,
     };

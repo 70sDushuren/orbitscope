@@ -18,6 +18,8 @@ pub struct ObjectSummary {
     pub source: String,
     pub epoch: String,
     pub epoch_age_days: f64,
+    /// 根数的获取时间
+    pub fetched_at: Option<String>,
     pub perigee_km: f64,
     pub apogee_km: f64,
     pub inclination_deg: f64,
@@ -52,6 +54,7 @@ impl ObjectSummary {
             source: o.source.to_string(),
             epoch: fmt_time(o.epoch),
             epoch_age_days: round(days_since(o.epoch, t), 3),
+            fetched_at: o.fetched_at.map(fmt_time),
             perigee_km: round(o.derived.perigee_alt_km, 1),
             apogee_km: round(o.derived.apogee_alt_km, 1),
             inclination_deg: round(o.derived.inclination_deg, 4),

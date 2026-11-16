@@ -62,6 +62,38 @@ requests_per_hour = 200
 # 本地 TLE / 3LE / OMM JSON 文件
 paths = []
 
+[archive]
+# 历史归档:每次获取后不覆盖历史,按"编号 + 历元"保存每组根数并记录首次获取时间。
+# 目录默认为用户数据目录下的 orbitscope(macOS: ~/Library/Application Support/orbitscope,
+# Linux: ~/.local/share/orbitscope)
+# dir = "/var/lib/orbitscope"
+# 指定时刻 T 时的默认时刻策略(命令行 --policy、Web 界面可切换):
+#   known-at       T 时刻已获取到的最新根数(结果可复现)
+#   nearest-epoch  历元最接近 T 的根数(可能用到 T 之后才获取的数据)
+#   latest         历元最新的根数
+time_policy = "known-at"
+
+[archive.snapshots]
+# 每次网络下载的原始文件另存一份带时间戳的压缩快照,超出上限时删除最旧的
+enabled = true
+max_files = 200       # 0 = 不限
+max_total_mb = 1024   # 0 = 不限
+
+[archive.history]
+# 根数历史库(SQLite)。清理时删除最旧的根数,但每个物体最新的一条永不删除
+enabled = true
+retain_days = 0       # 保留最近多少天获取的根数,0 = 不限
+max_total_mb = 4096   # 空间上限,0 = 不限
+
+[collect]
+# 采集策略(Web 界面也可切换):
+#   serve     由 orbitscope serve 负责定期采集(默认)
+#   daemon    由常驻进程 orbitscope collect 采集,Web 服务只读本地数据
+#   external  由系统定时任务运行 orbitscope fetch 采集,Web 服务只读本地数据
+mode = "serve"
+# 非 serve 模式下 Web 服务重新加载本地数据的间隔(分钟)
+reload_minutes = 5
+
 [server]
 # 监听地址。默认只允许本机访问;改为 0.0.0.0:8080 对外开放时,建议设置环境变量
 # ORBITSCOPE_API_TOKEN,写操作(修改默认过滤、手动刷新)需携带 Authorization: Bearer <token>

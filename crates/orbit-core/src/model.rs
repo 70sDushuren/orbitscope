@@ -222,6 +222,8 @@ pub struct SpaceObject {
     pub derived: DerivedOrbit,
     pub size: SizeEstimate,
     pub source: DataSource,
+    /// 这组根数的获取时间(来自数据源;未知为 `None`)
+    pub fetched_at: Option<DateTime<Utc>>,
     /// 原始平根数(OMM 字段名)
     pub elements: sgp4::Elements,
 }

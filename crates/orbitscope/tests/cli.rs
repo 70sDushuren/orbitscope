@@ -20,8 +20,9 @@ fn write_config(dir: &Path) -> PathBuf {
         .map(|f| format!("{:?}", testdata(f).display().to_string()))
         .join(", ");
     let cfg = format!(
-        "[filter]\nmax_epoch_age_days = 30\n\n[sources]\ncache_dir = {:?}\n\n[sources.celestrak]\nenabled = false\n\n[sources.files]\npaths = [{files}]\n",
-        dir.join("cache").display().to_string()
+        "[filter]\nmax_epoch_age_days = 30\n\n[sources]\ncache_dir = {:?}\n\n[sources.celestrak]\nenabled = false\n\n[sources.files]\npaths = [{files}]\n\n[archive]\ndir = {:?}\n# testdata 的历元在 2024 年,而文件的获取时间是现在;按历元选取\ntime_policy = \"nearest-epoch\"\n",
+        dir.join("cache").display().to_string(),
+        dir.join("archive").display().to_string()
     );
     let p = dir.join("test.toml");
     std::fs::write(&p, cfg).unwrap();
@@ -29,9 +30,15 @@ fn write_config(dir: &Path) -> PathBuf {
 }
 
 fn run(dir: &Path, args: &[&str]) -> Output {
+    // 隔离用户目录:测试绝不读写真实的缓存、数据与配置目录
+    let home = dir.join("home");
     Command::new(env!("CARGO_BIN_EXE_orbitscope"))
         .args(args)
         .current_dir(dir)
+        .env("HOME", &home)
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env_remove("ORBITSCOPE_CONFIG")
         .env_remove("ORBITSCOPE_SPACETRACK_USER")
         .env_remove("ORBITSCOPE_SPACETRACK_PASSWORD")
@@ -331,4 +338,170 @@ fn spacetrack_enabled_without_credentials_errors() {
     let out = run(dir.path(), &["-c", p.to_str().unwrap(), "fetch"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("ORBITSCOPE_SPACETRACK_USER"));
+}
+
+// ---------------------------------------------------------------- 历史归档
+
+/// 把 testdata 文件复制到临时目录,并把修改时间(即"获取时间")设为指定时刻。
+fn copy_with_mtime(dir: &Path, name: &str, mtime: &str) -> PathBuf {
+    let dst = dir.join(name);
+    std::fs::copy(testdata(name), &dst).unwrap();
+    let t: std::time::SystemTime = chrono::DateTime::parse_from_rfc3339(mtime).unwrap().into();
+    std::fs::File::options()
+        .write(true)
+        .open(&dst)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+    dst
+}
+
+fn archive_config(dir: &Path, files: &[PathBuf], policy: &str) -> PathBuf {
+    let files = files
+        .iter()
+        .map(|f| format!("{:?}", f.display().to_string()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let cfg = format!(
+        "[filter]\nmax_epoch_age_days = 30\n[sources]\ncache_dir = {:?}\n[sources.celestrak]\nenabled = false\n[sources.files]\npaths = [{files}]\n[archive]\ndir = {:?}\ntime_policy = {policy:?}\n",
+        dir.join("cache").display().to_string(),
+        dir.join("archive").display().to_string()
+    );
+    let p = dir.join("archive.toml");
+    std::fs::write(&p, cfg).unwrap();
+    p
+}
+
+#[test]
+fn fetch_appends_history_without_overwriting() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = copy_with_mtime(dir.path(), "spacetrack_gp.json", "2024-01-01T12:10:00Z");
+    let cfg = archive_config(dir.path(), &[f], "known-at");
+    let c = cfg.to_str().unwrap();
+
+    let out = ok(dir.path(), &["-c", c, "fetch"]);
+    assert!(out.contains("新增 3 条"), "{out}");
+    let out = ok(dir.path(), &["-c", c, "fetch"]);
+    assert!(out.contains("新增 0 条"), "重复获取不重复写入: {out}");
+
+    let st: serde_json::Value =
+        serde_json::from_str(&ok(dir.path(), &["-c", c, "history", "status", "-f", "json"])).unwrap();
+    assert_eq!(st["history"]["elsets"], 3);
+    assert!(dir.path().join("archive/history.sqlite").exists());
+
+    let hist = ok(dir.path(), &["-c", c, "history", "object", "25544"]);
+    assert!(
+        hist.contains("2024-01-01T12:00:00Z") && hist.contains("2024-01-01T12:10:00Z"),
+        "{hist}"
+    );
+    ok(dir.path(), &["-c", c, "history", "prune"]);
+    ok(dir.path(), &["-c", c, "history", "fetches"]);
+    ok(dir.path(), &["-c", c, "history", "snapshots"]);
+}
+
+#[test]
+fn known_at_is_reproducible_and_respects_fetch_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = copy_with_mtime(dir.path(), "spacetrack_gp.json", "2024-01-01T12:10:00Z");
+    let cfg = archive_config(dir.path(), &[f], "known-at");
+    let c = cfg.to_str().unwrap();
+
+    // 获取时间(12:10)之后:有数据,且两次结果完全一致
+    let run_list = || {
+        ok(
+            dir.path(),
+            &[
+                "-c",
+                c,
+                "--quiet",
+                "list",
+                "--at",
+                "2024-01-01T12:30:00Z",
+                "-f",
+                "csv",
+            ],
+        )
+    };
+    let a = run_list();
+    let b = run_list();
+    assert_eq!(a, b);
+    assert!(a.contains("25544,"));
+    assert!(a.contains("2024-01-01T12:10:00Z"), "输出包含根数获取时间: {a}");
+
+    // 获取时间之前:known-at 下没有数据
+    let early = run(dir.path(), &["-c", c, "list", "--at", "2024-01-01T12:05:00Z"]);
+    assert!(!early.status.success());
+    assert!(String::from_utf8_lossy(&early.stderr).contains("没有满足条件的数据"));
+
+    // 同一时刻换用 nearest-epoch 策略则可以选到
+    let near = ok(
+        dir.path(),
+        &[
+            "-c",
+            c,
+            "--quiet",
+            "--policy",
+            "nearest-epoch",
+            "list",
+            "--at",
+            "2024-01-01T12:05:00Z",
+            "-f",
+            "csv",
+        ],
+    );
+    assert!(near.contains("25544,"));
+
+    // 数据依据输出到 stderr
+    let out = run(dir.path(), &["-c", c, "list", "--at", "2024-01-01T12:30:00Z"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("数据依据"));
+
+    // show 的 JSON 带 provenance
+    let v: serde_json::Value = serde_json::from_str(&ok(
+        dir.path(),
+        &[
+            "-c",
+            c,
+            "--quiet",
+            "show",
+            "25544",
+            "--at",
+            "2024-01-01T12:30:00Z",
+            "-f",
+            "json",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(v["provenance"]["policy"], "known-at");
+
+    assert!(
+        !run(dir.path(), &["-c", c, "--policy", "bogus", "list"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn collect_once_records_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = copy_with_mtime(dir.path(), "sample.3le", "2024-01-01T11:00:00Z");
+    let cfg = archive_config(dir.path(), &[f], "known-at");
+    let c = cfg.to_str().unwrap();
+    ok(dir.path(), &["-c", c, "collect", "--once"]);
+    let st: serde_json::Value =
+        serde_json::from_str(&ok(dir.path(), &["-c", c, "history", "status", "-f", "json"])).unwrap();
+    assert_eq!(st["history"]["elsets"], 3);
+}
+
+#[test]
+fn archive_disabled_falls_back_to_latest() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = write_config(dir.path());
+    let mut text = std::fs::read_to_string(&cfg).unwrap();
+    text.push_str("[archive.history]\nenabled = false\n[archive.snapshots]\nenabled = false\n");
+    std::fs::write(&cfg, text).unwrap();
+    let c = cfg.to_str().unwrap();
+    let out = ok(dir.path(), &["-c", c, "--quiet", "list", "--at", AT, "-f", "csv"]);
+    assert_eq!(out.lines().count(), 5);
+    assert!(!dir.path().join("archive").exists());
+    assert!(!run(dir.path(), &["-c", c, "history", "status"]).status.success());
 }

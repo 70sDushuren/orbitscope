@@ -8,12 +8,14 @@ use crate::output::{
 };
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
+use orbit_archive::{Archive, ArchiveReport, CollectMode, Provenance, TimePolicy};
 use orbit_core::{Catalog, Filter, Snapshot, SpaceObject, StateVector, Stats};
 use orbit_sources::spacetrack::Credentials;
 use orbit_sources::{FetchAllResult, FetchMode, Origin, SourceSet, SourceStatus};
 use std::cmp::Ordering;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// 运行上下文。
 pub struct Ctx {
@@ -21,6 +23,8 @@ pub struct Ctx {
     pub config_path: Option<PathBuf>,
     pub offline: bool,
     pub quiet: bool,
+    /// 命令行指定的时刻策略(覆盖配置)
+    pub policy: Option<TimePolicy>,
 }
 
 fn describe_origin(o: &Origin) -> String {
@@ -74,21 +78,107 @@ fn print_status(s: &SourceStatus, verbose: bool) {
     }
 }
 
-async fn fetch_sources(ctx: &Ctx, mode: FetchMode) -> Result<FetchAllResult> {
-    let set = SourceSet::from_config(&ctx.cfg.sources, Credentials::from_env())?;
-    // 缓存新鲜度始终按真实当前时间判断
-    let result = set.fetch_all(mode, Utc::now()).await;
-    Ok(result)
+/// 打开归档(历史库与快照都关闭时返回 `None`)。
+pub fn open_archive(cfg: &AppConfig) -> Result<Option<Arc<Archive>>> {
+    let a = &cfg.archive;
+    if !a.history.enabled && !a.snapshots.enabled {
+        return Ok(None);
+    }
+    Ok(Some(Arc::new(Archive::open(a).context("打开历史归档失败")?)))
 }
 
-/// 获取数据并构建编目。`at` 用于判断再入。
-async fn load_catalog(ctx: &Ctx, at: DateTime<Utc>) -> Result<Catalog> {
+/// 一次采集的结果。
+pub struct Acquired {
+    pub result: FetchAllResult,
+    pub archive: Option<Arc<Archive>>,
+    pub report: Option<ArchiveReport>,
+}
+
+/// 获取全部数据源并写入归档。
+pub async fn acquire(cfg: &AppConfig, mode: FetchMode) -> Result<Acquired> {
+    let set = SourceSet::from_config(&cfg.sources, Credentials::from_env())?;
+    // 缓存新鲜度始终按真实当前时间判断
+    let result = set.fetch_all(mode, Utc::now()).await;
+    let archive = open_archive(cfg)?;
+    let Some(arc) = archive.clone() else {
+        return Ok(Acquired {
+            result,
+            archive: None,
+            report: None,
+        });
+    };
+    if !result.any_ok() {
+        return Ok(Acquired {
+            result,
+            archive,
+            report: None,
+        });
+    }
+    let cache = set.cache().clone();
+    let (result, report) = tokio::task::spawn_blocking(move || {
+        let r = arc.record(&result, &cache, Utc::now());
+        (result, r)
+    })
+    .await
+    .context("归档任务失败")?;
+    let report = match report {
+        Ok(r) => Some(r),
+        Err(e) => {
+            // 归档失败不影响本次展示
+            eprintln!("! 写入历史归档失败: {e}");
+            None
+        }
+    };
+    Ok(Acquired {
+        result,
+        archive,
+        report,
+    })
+}
+
+/// 编目及其数据依据。
+pub struct LoadedCatalog {
+    pub catalog: Catalog,
+    pub provenance: Option<Provenance>,
+}
+
+impl Ctx {
+    /// 生效的时刻策略:命令行 `--policy` 优先,其次配置。
+    pub fn policy(&self) -> TimePolicy {
+        self.policy.unwrap_or(self.cfg.archive.time_policy)
+    }
+}
+
+fn fmt_opt_time(t: Option<DateTime<Utc>>) -> String {
+    t.map_or_else(|| "-".into(), fmt_time)
+}
+
+/// 一行数据依据说明。
+pub fn describe_provenance(p: &Provenance) -> String {
+    let what = match p.policy {
+        TimePolicy::KnownAt => format!("截至 {} 已获取的数据", fmt_time(p.data_time)),
+        TimePolicy::NearestEpoch => format!("历元最接近 {} 的数据", fmt_time(p.data_time)),
+        TimePolicy::Latest => "历史库中最新的数据".to_string(),
+    };
+    format!(
+        "数据依据:{what}(策略 {}),{} 个物体,根数获取于 {} 至 {}",
+        p.policy,
+        p.records,
+        fmt_opt_time(p.first_seen_min),
+        fmt_opt_time(p.first_seen_max)
+    )
+}
+
+/// 获取数据、写入归档,并按时刻策略构建编目。
+///
+/// 历史库可用时从历史库按 `at` 与策略选取根数(结果可复现);否则使用本次获取的最新数据。
+async fn load_catalog(ctx: &Ctx, at: DateTime<Utc>) -> Result<LoadedCatalog> {
     let mode = if ctx.offline {
         FetchMode::CacheOnly
     } else {
         FetchMode::Normal
     };
-    let result = fetch_sources(ctx, mode).await?;
+    let Acquired { result, archive, .. } = acquire(&ctx.cfg, mode).await?;
     let any_problem = result.statuses.iter().any(|s| {
         !s.ok
             || s.resources
@@ -101,6 +191,37 @@ async fn load_catalog(ctx: &Ctx, at: DateTime<Utc>) -> Result<Catalog> {
             print_status(s, false);
         }
     }
+
+    let history = archive.filter(|a| a.history().is_some());
+    if let Some(a) = history {
+        let policy = ctx.policy();
+        let (cat, report, prov) = tokio::task::spawn_blocking(move || a.catalog_at(policy, at))
+            .await
+            .context("读取历史库任务失败")??
+            .context("历史库不可用")?;
+        if !ctx.quiet {
+            eprintln!("{}", describe_provenance(&prov));
+        }
+        if !report.rejected.is_empty() {
+            tracing::warn!(count = report.rejected.len(), "部分根数非法被剔除");
+        }
+        if cat.is_empty() {
+            bail!(
+                "历史库中没有满足条件的数据(策略 {policy},时刻 {})。{}",
+                fmt_time(at),
+                if result.any_ok() {
+                    "该时刻可能早于第一次采集"
+                } else {
+                    "请先运行 `orbitscope fetch`"
+                }
+            );
+        }
+        return Ok(LoadedCatalog {
+            catalog: cat,
+            provenance: Some(prov),
+        });
+    }
+
     if !result.any_ok() {
         bail!(
             "所有数据源均失败{}",
@@ -118,18 +239,51 @@ async fn load_catalog(ctx: &Ctx, at: DateTime<Utc>) -> Result<Catalog> {
     if cat.is_empty() {
         bail!("编目为空");
     }
-    Ok(cat)
+    Ok(LoadedCatalog {
+        catalog: cat,
+        provenance: None,
+    })
 }
 
 // ---------------------------------------------------------------- fetch
 
+fn print_archive_report(archive: &Archive, report: &ArchiveReport) {
+    if let Some(h) = &report.history {
+        let usage = archive.history().and_then(|h| h.usage().ok());
+        println!(
+            "历史库:本次 {} 条根数,新增 {} 条{}",
+            h.records,
+            h.new_elsets,
+            usage
+                .map(|u| format!("(累计 {} 条,{} 个物体)", u.elsets, u.objects))
+                .unwrap_or_default()
+        );
+    }
+    if report.snapshots_saved > 0 || report.snapshots_pruned > 0 {
+        println!(
+            "完整快照:保存 {} 个,清理旧快照 {} 个",
+            report.snapshots_saved, report.snapshots_pruned
+        );
+    }
+    if report.elsets_pruned > 0 {
+        println!("历史清理:删除旧根数 {} 条", report.elsets_pruned);
+    }
+}
+
 pub async fn fetch(ctx: &Ctx) -> Result<()> {
-    let result = fetch_sources(ctx, FetchMode::Normal).await?;
+    let Acquired {
+        result,
+        archive,
+        report,
+    } = acquire(&ctx.cfg, FetchMode::Normal).await?;
     for s in &result.statuses {
         print_status(s, true);
     }
     if !result.any_ok() {
         bail!("所有数据源均失败");
+    }
+    if let (Some(a), Some(r)) = (&archive, &report) {
+        print_archive_report(a, r);
     }
     let now = Utc::now();
     let (cat, report) = result.build_catalog(now);
@@ -143,6 +297,220 @@ pub async fn fetch(ctx: &Ctx) -> Result<()> {
     );
     let sel = cat.select(&ctx.cfg.filter, now);
     println!("按配置的过滤条件:{} 个", sel.len());
+    Ok(())
+}
+
+// ---------------------------------------------------------------- collect
+
+/// 常驻采集:立即采集一次,之后每小时在随机分钟(避开整点/半点)再采集。
+pub async fn collect(ctx: &Ctx, once: bool) -> Result<()> {
+    if ctx.cfg.collect.mode != CollectMode::Daemon && !once {
+        eprintln!(
+            "提示:配置中的采集策略为 {}({}),但正在运行常驻采集进程;如需由本进程负责采集,请设置 [collect] mode = \"daemon\"",
+            ctx.cfg.collect.mode,
+            ctx.cfg.collect.mode.label()
+        );
+    }
+    let minute = orbit_server::scheduler::pick_refresh_minute(std::hash::BuildHasher::hash_one(
+        &std::collections::hash_map::RandomState::new(),
+        std::process::id(),
+    ));
+    let mut shutdown = std::pin::pin!(shutdown_signal());
+    loop {
+        let started = Utc::now();
+        match acquire(&ctx.cfg, FetchMode::Normal).await {
+            Ok(Acquired {
+                result,
+                archive,
+                report,
+            }) => {
+                for s in &result.statuses {
+                    print_status(s, false);
+                }
+                if let (Some(a), Some(r)) = (&archive, &report) {
+                    print_archive_report(a, r);
+                }
+            }
+            Err(e) => eprintln!("✗ 采集失败: {e:#}"),
+        }
+        if once {
+            return Ok(());
+        }
+        let wake = orbit_server::scheduler::next_wake(Utc::now(), minute, 0);
+        eprintln!("[{}] 本轮完成,下次采集 {}", fmt_time(started), fmt_time(wake));
+        let sleep = (wake - Utc::now()).to_std().unwrap_or_default();
+        tokio::select! {
+            _ = tokio::time::sleep(sleep) => {}
+            _ = &mut shutdown => {
+                eprintln!("采集进程已停止");
+                return Ok(());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- history
+
+pub enum HistoryCmd {
+    Status,
+    Fetches(usize),
+    Object(u32, usize),
+    Snapshots(usize),
+    Prune,
+}
+
+fn mb(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+}
+
+pub async fn history(ctx: &Ctx, cmd: HistoryCmd, format: Format) -> Result<()> {
+    let archive = open_archive(&ctx.cfg)?
+        .context("历史归档已关闭([archive.history] 与 [archive.snapshots] 均未启用)")?;
+    let mut out = std::io::stdout().lock();
+    match cmd {
+        HistoryCmd::Status => {
+            let a = archive.clone();
+            let u = tokio::task::spawn_blocking(move || a.usage()).await??;
+            if format != Format::Table {
+                return write_json(&mut out, &u);
+            }
+            let cfg = &ctx.cfg.archive;
+            let limit = |v: u64, unit: &str| {
+                if v == 0 {
+                    "不限".to_string()
+                } else {
+                    format!("{v} {unit}")
+                }
+            };
+            let mut rows = vec![
+                ("归档目录", u.dir.clone()),
+                (
+                    "默认时刻策略",
+                    format!("{}({})", cfg.time_policy, cfg.time_policy.label()),
+                ),
+                (
+                    "采集策略",
+                    format!("{}({})", ctx.cfg.collect.mode, ctx.cfg.collect.mode.label()),
+                ),
+            ];
+            match &u.history {
+                Some(h) => {
+                    rows.push(("历史库根数", format!("{} 条,{} 个物体", h.elsets, h.objects)));
+                    rows.push(("采集记录", format!("{} 次", h.fetches)));
+                    rows.push((
+                        "获取时间范围",
+                        format!(
+                            "{} 至 {}",
+                            fmt_opt_time(h.first_seen_min),
+                            fmt_opt_time(h.first_seen_max)
+                        ),
+                    ));
+                    rows.push((
+                        "历史库大小",
+                        format!("{}(上限 {})", mb(h.bytes), limit(cfg.history.max_total_mb, "MB")),
+                    ));
+                    rows.push(("保留时段", limit(u64::from(cfg.history.retain_days), "天")));
+                }
+                None => rows.push(("历史库", "已关闭".into())),
+            }
+            let sn = &u.snapshots;
+            rows.push((
+                "完整快照",
+                if cfg.snapshots.enabled {
+                    format!(
+                        "{} 个,{}(上限 {} 个 / {})",
+                        sn.files,
+                        mb(sn.bytes),
+                        if cfg.snapshots.max_files == 0 {
+                            "不限".into()
+                        } else {
+                            cfg.snapshots.max_files.to_string()
+                        },
+                        limit(cfg.snapshots.max_total_mb, "MB")
+                    )
+                } else {
+                    "已关闭".into()
+                },
+            ));
+            rows.push((
+                "快照时间范围",
+                format!("{} 至 {}", fmt_opt_time(sn.oldest), fmt_opt_time(sn.newest)),
+            ));
+            writeln!(out, "{}", kv_table(&rows))?;
+        }
+        HistoryCmd::Fetches(n) => {
+            let h = archive.clone();
+            let rows =
+                tokio::task::spawn_blocking(move || h.history().map(|h| h.recent_fetches(n)).transpose())
+                    .await??
+                    .context("历史库已关闭")?;
+            if format != Format::Table {
+                return write_json(&mut out, &rows);
+            }
+            let mut t = comfy_table::Table::new();
+            t.load_style(comfy_table::presets::UTF8_FULL_CONDENSED);
+            t.set_header(vec!["获取时间 (UTC)", "数据源", "资源", "方式", "大小"]);
+            for r in &rows {
+                let how = match r.origin.as_str() {
+                    "network" => "下载",
+                    "not_modified" => "确认未更新",
+                    other => other,
+                };
+                t.add_row(vec![
+                    fmt_time(r.fetched_at),
+                    r.source.clone(),
+                    r.resource.clone(),
+                    how.into(),
+                    mb(r.bytes),
+                ]);
+            }
+            writeln!(out, "{t}\n共 {} 条(最近的在前)", rows.len())?;
+        }
+        HistoryCmd::Object(id, n) => {
+            let h = archive.clone();
+            let rows =
+                tokio::task::spawn_blocking(move || h.history().map(|h| h.object_history(id, n)).transpose())
+                    .await??
+                    .context("历史库已关闭")?;
+            if format != Format::Table {
+                return write_json(&mut out, &rows);
+            }
+            if rows.is_empty() {
+                bail!("历史库中没有 NORAD {id}");
+            }
+            let mut t = comfy_table::Table::new();
+            t.load_style(comfy_table::presets::UTF8_FULL_CONDENSED);
+            t.set_header(vec!["根数历元 (UTC)", "首次获取 (UTC)", "数据源"]);
+            for r in &rows {
+                t.add_row(vec![fmt_time(r.epoch), fmt_time(r.first_seen), r.source.clone()]);
+            }
+            writeln!(out, "NORAD {id} 的历史根数(历元从新到旧,最多 {n} 条)\n{t}")?;
+        }
+        HistoryCmd::Snapshots(n) => {
+            let a = archive.clone();
+            let mut files = tokio::task::spawn_blocking(move || a.snapshots().list()).await??;
+            files.reverse();
+            files.truncate(n);
+            if format != Format::Table {
+                return write_json(&mut out, &files);
+            }
+            let mut t = comfy_table::Table::new();
+            t.load_style(comfy_table::presets::UTF8_FULL_CONDENSED);
+            t.set_header(vec!["获取时间 (UTC)", "资源", "压缩后大小"]);
+            for f in &files {
+                t.add_row(vec![fmt_time(f.fetched_at), f.resource.clone(), mb(f.bytes)]);
+            }
+            writeln!(out, "{t}\n快照目录:{}", archive.snapshots().dir().display())?;
+        }
+        HistoryCmd::Prune => {
+            let a = archive.clone();
+            let r = tokio::task::spawn_blocking(move || a.prune(Utc::now())).await??;
+            println!(
+                "已清理:旧根数 {} 条,旧快照 {} 个",
+                r.elsets_pruned, r.snapshots_pruned
+            );
+        }
+    }
     Ok(())
 }
 
@@ -220,7 +588,7 @@ fn open_output(path: Option<&Path>) -> Result<Box<dyn Write>> {
 pub async fn list(ctx: &Ctx, opts: ListOpts) -> Result<()> {
     let at = parse_time(&opts.at, Utc::now())?;
     let filter = opts.filter.apply(&ctx.cfg.filter)?;
-    let cat = load_catalog(ctx, at).await?;
+    let LoadedCatalog { catalog: cat, .. } = load_catalog(ctx, at).await?;
     let (mut sel, snap) = compute(&cat, &filter, at);
     sort_selection(&cat, &mut sel, opts.sort, opts.desc, at);
     let total = sel.len();
@@ -278,7 +646,10 @@ pub struct ShowOpts {
 
 pub async fn show(ctx: &Ctx, opts: ShowOpts) -> Result<()> {
     let at = parse_time(&opts.at, Utc::now())?;
-    let cat = load_catalog(ctx, at).await?;
+    let LoadedCatalog {
+        catalog: cat,
+        provenance,
+    } = load_catalog(ctx, at).await?;
     let idx = cat
         .index_of(opts.norad_id)
         .with_context(|| format!("编目中没有 NORAD {}", opts.norad_id))?;
@@ -303,6 +674,7 @@ pub async fn show(ctx: &Ctx, opts: ShowOpts) -> Result<()> {
             state: Option<StateVector>,
             error: Option<String>,
             track: Option<Vec<orbit_core::TrackPoint>>,
+            provenance: Option<Provenance>,
         }
         let (st, err) = match &state {
             Ok(s) => (Some(*s), None),
@@ -316,6 +688,7 @@ pub async fn show(ctx: &Ctx, opts: ShowOpts) -> Result<()> {
                 state: st,
                 error: err,
                 track,
+                provenance,
             },
         );
     }
@@ -401,7 +774,7 @@ pub async fn show(ctx: &Ctx, opts: ShowOpts) -> Result<()> {
 pub async fn stats(ctx: &Ctx, filter: FilterArgs, at: String, bin_km: f64, format: Format) -> Result<()> {
     let at = parse_time(&at, Utc::now())?;
     let filter = filter.apply(&ctx.cfg.filter)?;
-    let cat = load_catalog(ctx, at).await?;
+    let LoadedCatalog { catalog: cat, .. } = load_catalog(ctx, at).await?;
     let (sel, _) = compute(&cat, &filter, at);
     let s = Stats::compute(sel.iter().map(|(i, _)| &cat.objects()[*i]), bin_km);
 

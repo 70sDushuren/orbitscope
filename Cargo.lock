@@ -1686,6 +1686,7 @@ dependencies = [
  "comfy-table",
  "csv",
  "dirs",
+ "orbit-archive",
  "orbit-core",
  "orbit-server",
  "orbit-sources",

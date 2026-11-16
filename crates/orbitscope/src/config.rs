@@ -47,6 +47,8 @@ impl Default for ServerConfig {
 pub struct AppConfig {
     pub filter: Filter,
     pub sources: SourcesConfig,
+    pub archive: orbit_archive::ArchiveConfig,
+    pub collect: orbit_archive::CollectConfig,
     pub server: ServerConfig,
 }
 
