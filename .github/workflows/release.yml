@@ -1,11 +1,18 @@
 name: Release
 
-# 构建各平台二进制并发布到 GitHub Releases。两种触发方式:
+# 构建各平台二进制并发布到 GitHub Releases。三种触发方式:
 #   1. 推荐:Actions → "Prepare release" 手动运行,输入版本号;它会自动补译多语言、更新版本号、打标签并调用本工作流。
 #   2. 手动推送标签:git tag v0.2.1 && git push origin v0.2.1(要求多语言译文已是最新,否则发布失败)。
+#   3. 已有标签发布失败时:Actions → Release → Run workflow,输入该标签重新构建并发布。
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要重新构建并发布的已有标签,例如 v0.2.1
+        required: true
+        type: string
   workflow_call:
     inputs:
       tag:
@@ -40,7 +47,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, archive: tar.gz }
-          - { os: macos-14, target: aarch64-apple-darwin, archive: tar.gz }
+          - { os: macos-15, target: aarch64-apple-darwin, archive: tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     steps:
       - uses: actions/checkout@v4
