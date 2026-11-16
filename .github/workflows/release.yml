@@ -32,7 +32,7 @@ jobs:
     name: Translations up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
       - name: Check translations
@@ -50,7 +50,7 @@ jobs:
           - { os: macos-15, target: aarch64-apple-darwin, archive: tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
@@ -69,7 +69,7 @@ jobs:
           cp config/orbitscope.example.toml "dist/$name/"
           cd dist
           if [ "${{ matrix.archive }}" = "zip" ]; then 7z a "$name.zip" "$name" >/dev/null; else tar -czf "$name.tar.gz" "$name"; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: dist/*.${{ matrix.archive }}
@@ -78,13 +78,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           files: dist/*
