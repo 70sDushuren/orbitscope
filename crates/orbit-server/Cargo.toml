@@ -1,0 +1,28 @@
+[package]
+name = "orbit-server"
+description = "OrbitScope 服务端:REST API、WebSocket 位置推送、定时刷新"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+orbit-core.workspace = true
+orbit-sources.workspace = true
+arc-swap.workspace = true
+axum.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true

@@ -195,33 +195,55 @@ impl FetchAllResult {
 
 ## 5. 服务端设计(orbit-server)
 
+启动:`orbitscope serve [--bind 地址] [--sim-time 时刻]`。
+
 ### 5.1 运行时任务
-- **Scheduler**:按各数据源间隔刷新 → 构建新 `Catalog` → ArcSwap 替换 → 广播 `CatalogUpdated` 事件。
-- **Ticker**:每 `tick_interval`(默认 1 s)对"任一订阅者需要的物体并集"做一次批量外推,结果放入共享缓冲,各 WS 连接按自己的过滤下标集合取子集编码发送。
-- **WS 连接任务**:每连接一个 task,慢客户端丢帧(只保留最新帧,`tokio::sync::watch`)。
+- **首次加载**:启动时执行一次 `fetch_all(Normal)`(新鲜缓存直接用),构建编目后才开始监听。
+- **Scheduler**:每小时在启动时随机选定的分钟(落在 :02–:28 或 :32–:58,避开整点/半点,符合 Space-Track 规定)
+  加随机秒触发一次刷新;`POST /refresh` 可手动触发。是否真正联网由数据源缓存与硬下限决定。
+  成功后构建新 `CatalogState`(编目 + `generation`)并用 ArcSwap 原子替换,通过 `watch` 通知 WS 连接;
+  全部数据源失败时保留旧编目,只更新数据源状态。
+- **Ticker**:每 `tick_ms`(默认 1000,最小 100)**只要有 WS 订阅者**就对**全部**物体外推一次,
+  生成 `PositionFrame`(ECEF f32 + 高度,失败为 NaN),放入 `watch` 通道。计算量与客户端数量无关(ADR-013)。
+- **WS 连接任务**:每连接一个 task,从 `watch` 取最新帧、按自己的下标集合与瞬时高度条件编码发送;
+  慢客户端自然丢帧(只看到最新帧)。连接数上限 `max_ws_clients`(默认 64),超出返回 503。
+- **时钟**:服务端"当前时间" = 系统时间 + `time_offset`;`--sim-time` 用于回放旧数据或演示。
 
 ### 5.2 REST API(前缀 `/api/v1`)
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/status` | 版本、数据源状态、最后更新时间、物体总数 |
+| GET | `/status` | 版本、服务端时间、编目代数与数量、构建报告、数据源状态、刷新计划、WS 客户端数 |
 | GET | `/filters/default` | 服务器默认过滤条件 |
-| PUT | `/filters/default` | 修改默认过滤(需 token,若启用) |
-| GET | `/objects?alt_min=&alt_max=&min_size_cm=&types=&q=&page=&per_page=&sort=` | 物体列表(元数据 + 当前位置) |
-| GET | `/objects/{norad_id}` | 详情(根数、派生轨道参数、尺寸估算、当前状态) |
-| GET | `/objects/{norad_id}/track?before_min=&after_min=&step_s=` | 轨道线 / 地面轨迹点 |
-| GET | `/stats?<同过滤参数>` | 按类型/国家计数、高度直方图 |
-| POST | `/refresh` | 手动触发刷新(需 token,受限速约束) |
+| PUT | `/filters/default` | 局部 JSON 合并到默认过滤(写操作) |
+| GET | `/objects` | 列表:过滤参数 + `at`、`page`、`per_page`(≤ 5000)、`sort`(id/name/alt/perigee/apogee/inc/age/size)、`desc` |
+| GET | `/objects/{norad}` | 详情:`object`(含根数)、`summary`、`state`(`at` 时刻)、`error` |
+| GET | `/objects/{norad}/track` | 轨迹:`at`、`before_min`、`after_min`(默认一个周期)、`step_s`(默认 30,≥ 1) |
+| GET | `/stats` | 统计:过滤参数 + `bin_km` |
+| POST | `/refresh` | 手动触发刷新(写操作),返回 202 |
+| GET | `/stream` | WebSocket |
+
+过滤查询参数:`alt_min`、`alt_max`、`alt_mode`(orbit-overlap / orbit-within / instantaneous)、`min_size_cm`、
+`unknown_size`、`types`(逗号分隔:payload, rocket-body, debris, unknown)、`countries`、`inc_min`、`inc_max`、`q`、
+`max_age_days`、`any_age`;未给出的项取服务端默认过滤。错误统一返回 `{"error": "..."}`(400 / 401 / 403 / 404 / 503)。
+
+**写操作鉴权**(ADR-014):设置环境变量 `ORBITSCOPE_API_TOKEN`(≥ 16 字符)时要求 `Authorization: Bearer <token>`;
+未设置时只接受来自本机回环地址的写请求。读接口不鉴权。默认只监听 `127.0.0.1`。
 
 ### 5.3 WebSocket 协议(`/api/v1/stream`)
-- 客户端 → 服务端(JSON 文本):`{"type":"subscribe","filter":{...},"rate_hz":1}`;可随时重新 subscribe。
+- 客户端 → 服务端(JSON 文本):
+  - `{"type":"subscribe","filter":{...局部过滤...},"rate_hz":1}`(可随时重发更换条件;`rate_hz` 范围 0.05–10,不超过 tick)
+  - `{"type":"ping"}`
 - 服务端 → 客户端:
-  - JSON `{"type":"catalog","objects":[{id,name,type,...}]}`:订阅/数据更新时发送一次元数据(含下标→ID 映射)。
+  - `{"type":"hello","version","tick_ms","generation","frame_format":"OSF1"}`:连接后立即发送
+  - `{"type":"catalog","generation","total","filter","rate_hz","objects":[{i,id,name,type,country,perigee_km,apogee_km,inc_deg,size_m}]}`:
+    订阅时与编目更新时发送;`i` 为位置帧中使用的编目下标
   - 二进制位置帧(小端):
     ```
-    u32 magic 'OSF1' | u32 version | f64 unix_time_s | u32 count |
-    count × { u32 index ; f32 x_km ; f32 y_km ; f32 z_km }   // ECEF,16 字节/物体
+    "OSF1" | u32 版本(1) | u32 编目代数 | f64 Unix 秒 | u32 N | N × { u32 下标 ; f32 x_km ; f32 y_km ; f32 z_km }  // ECEF
     ```
-    前端用 ECEF 直接给 Cesium(Cartesian3 单位 m,×1000),并在两帧之间线性插值或用速度外推以获得平滑动画。
+    头部 24 字节,每物体 16 字节;帧代数与订阅代数不一致时不发送(等待新的 catalog 消息)。
+  - `{"type":"error","message"}`、`{"type":"pong"}`
+- 前端在两帧之间用线性插值或速度外推获得平滑动画。
 
 ## 6. 前端设计(web/)
 
@@ -289,3 +311,5 @@ tick_ms = 1000
 | 010 | 根数龄期过滤放在 `Filter`(运行时可调),编目构建只剔除已再入与非法根数 | 构建时剔除过期根数 | 修改龄期阈值无需重建编目 |
 | 011 | 数据源用枚举 `Source` 而非 `dyn Trait` | `async_trait` + trait 对象 | 数据源种类固定且少;避免额外依赖与装箱 future |
 | 012 | 刷新间隔设硬下限,且以磁盘缓存时间为准 | 只在内存中记录上次抓取时间 | 程序反复重启也不会违反数据源频率规定 |
+| 013 | 每 tick 对全部物体外推一次,各 WS 连接只做子集编码 | 按订阅条件的并集外推 / 每连接各自外推 | 3 万物体全量外推约 8 ms,实现最简单且计算量与客户端数无关;无订阅者时不计算 |
+| 014 | 写操作:有 token 时 Bearer 鉴权,无 token 时仅限本机 | 一律开放 / 强制 token | 本机单用户零配置可用,对外开放时有安全默认 |

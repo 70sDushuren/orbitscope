@@ -8,7 +8,7 @@ mod output;
 use anyhow::Result;
 use args::FilterArgs;
 use clap::{Parser, Subcommand};
-use commands::{Ctx, ListOpts, ShowOpts};
+use commands::{Ctx, ListOpts, ServeOpts, ShowOpts};
 use output::{Format, SortKey};
 use std::path::PathBuf;
 
@@ -103,6 +103,16 @@ enum Command {
         bin: f64,
         #[arg(short, long, value_enum, default_value = "table")]
         format: Format,
+    },
+
+    /// 启动 Web 服务(REST API + WebSocket 实时推送)
+    Serve {
+        /// 监听地址,覆盖配置 server.bind,如 127.0.0.1:8080
+        #[arg(long)]
+        bind: Option<String>,
+        /// 模拟时间:服务端时钟从该时刻开始走(RFC3339 或相对偏移),用于回放或演示
+        #[arg(long, allow_hyphen_values = true)]
+        sim_time: Option<String>,
     },
 
     /// 配置文件管理
@@ -244,6 +254,7 @@ async fn run(cli: Cli) -> Result<()> {
             bin,
             format,
         } => commands::stats(&ctx, filter, at, bin, format).await,
+        Command::Serve { bind, sim_time } => commands::serve(&ctx, ServeOpts { bind, sim_time }).await,
         Command::Config {
             action: ConfigAction::Show,
         } => commands::config_show(&ctx),

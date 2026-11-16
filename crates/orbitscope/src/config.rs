@@ -23,6 +23,7 @@ pub const EXAMPLE_CONFIG: &str = include_str!("../../../config/orbitscope.exampl
 pub struct ServerConfig {
     pub bind: String,
     pub tick_ms: u64,
+    pub max_ws_clients: usize,
 }
 
 impl Default for ServerConfig {
@@ -30,6 +31,7 @@ impl Default for ServerConfig {
         Self {
             bind: "127.0.0.1:8080".into(),
             tick_ms: 1_000,
+            max_ws_clients: 64,
         }
     }
 }

@@ -471,3 +471,59 @@ pub fn config_init(path: Option<PathBuf>, force: bool) -> Result<()> {
     println!("已生成配置文件 {}", path.display());
     Ok(())
 }
+
+// ---------------------------------------------------------------- serve
+
+pub struct ServeOpts {
+    pub bind: Option<String>,
+    pub sim_time: Option<String>,
+}
+
+pub async fn serve(ctx: &Ctx, opts: ServeOpts) -> Result<()> {
+    let cfg = &ctx.cfg;
+    let bind = opts.bind.as_deref().unwrap_or(&cfg.server.bind);
+    let bind: std::net::SocketAddr = bind.parse().with_context(|| format!("无效的监听地址 {bind:?}"))?;
+    if cfg.server.tick_ms < 100 {
+        bail!("server.tick_ms 不能小于 100");
+    }
+    let time_offset = match &opts.sim_time {
+        Some(t) => {
+            let now = Utc::now();
+            parse_time(t, now)? - now
+        }
+        None => chrono::Duration::zero(),
+    };
+    let api_token = std::env::var("ORBITSCOPE_API_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+    if api_token.as_ref().is_some_and(|t| t.len() < 16) {
+        bail!("ORBITSCOPE_API_TOKEN 至少需要 16 个字符");
+    }
+
+    let mut sources_cfg = cfg.sources.clone();
+    if ctx.offline {
+        // 离线:不联网,只用缓存与本地文件
+        eprintln!("离线模式:服务只使用缓存与本地文件,不会刷新网络数据");
+        sources_cfg.spacetrack.enabled = false;
+    }
+    let sources = SourceSet::from_config(&sources_cfg, Credentials::from_env())?;
+    let options = orbit_server::ServerOptions {
+        bind,
+        tick: std::time::Duration::from_millis(cfg.server.tick_ms),
+        max_ws_clients: cfg.server.max_ws_clients.max(1),
+        api_token,
+        default_filter: cfg.filter.clone(),
+        time_offset,
+        refresh_minute: None,
+    };
+    eprintln!("OrbitScope 服务启动中:http://{bind}/");
+    if !time_offset.is_zero() {
+        eprintln!("模拟时间:服务端时钟偏移 {} 秒", time_offset.num_seconds());
+    }
+    orbit_server::serve(options, sources, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
+    eprintln!("服务已停止");
+    Ok(())
+}

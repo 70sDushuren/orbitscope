@@ -1,6 +1,7 @@
 //! 时间相关计算。时间统一使用 `DateTime<Utc>`;UT1 近似为 UTC(误差 < 0.9 s,对应地面位置 < 0.4 km)。
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use crate::error::CoreError;
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use std::f64::consts::TAU;
 
 /// Unix 纪元(1970-01-01T00:00:00Z)对应的儒略日。
@@ -44,6 +45,52 @@ pub fn minutes_since(epoch: DateTime<Utc>, t: DateTime<Utc>) -> f64 {
 /// `t` 相对 `epoch` 的天数(可为负)。
 pub fn days_since(epoch: DateTime<Utc>, t: DateTime<Utc>) -> f64 {
     minutes_since(epoch, t) / 1_440.0
+}
+
+/// 解析时间参数:`now`、RFC3339(如 `2024-01-01T12:00:00Z`),或相对 `now` 的偏移
+/// (如 `+90m`、`-2h`、`+1d`、`+30s`)。
+pub fn parse_time_arg(s: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>, CoreError> {
+    let bad = |m: String| CoreError::InvalidArgument(m);
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("now") {
+        return Ok(now);
+    }
+    if let Some(sign) = s.chars().next().filter(|c| *c == '+' || *c == '-') {
+        let body = &s[1..];
+        let (num, unit) = body.split_at(body.len().saturating_sub(1));
+        let n: i64 = num.parse().map_err(|_| bad(format!("无效的时间偏移 {s:?}")))?;
+        let d = match unit {
+            "s" => Duration::try_seconds(n),
+            "m" => Duration::try_minutes(n),
+            "h" => Duration::try_hours(n),
+            "d" => Duration::try_days(n),
+            _ => return Err(bad(format!("时间偏移单位应为 s/m/h/d: {s:?}"))),
+        }
+        .ok_or_else(|| bad(format!("时间偏移过大: {s:?}")))?;
+        let t = if sign == '+' {
+            now.checked_add_signed(d)
+        } else {
+            now.checked_sub_signed(d)
+        };
+        return t.ok_or_else(|| bad(format!("时间超出范围: {s:?}")));
+    }
+    DateTime::parse_from_rfc3339(s)
+        .map(|t| t.with_timezone(&Utc))
+        .map_err(|e| {
+            bad(format!(
+                "无法解析时间 {s:?}: {e}(支持 now、RFC3339、+90m/-2h/+1d)"
+            ))
+        })
+}
+
+/// 解析正的时长,如 `30s`、`5m`、`2h`、`1d`。
+pub fn parse_duration_arg(s: &str) -> Result<Duration, CoreError> {
+    let epoch = DateTime::<Utc>::UNIX_EPOCH;
+    let d = parse_time_arg(&format!("+{}", s.trim()), epoch)? - epoch;
+    if d <= Duration::zero() {
+        return Err(CoreError::InvalidArgument(format!("时长必须为正: {s:?}")));
+    }
+    Ok(d)
 }
 
 #[cfg(test)]

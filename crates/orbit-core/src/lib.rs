@@ -25,6 +25,7 @@ pub mod omm;
 pub mod propagate;
 pub mod size;
 pub mod stats;
+pub mod summary;
 pub mod time;
 pub mod tle;
 
@@ -38,6 +39,7 @@ pub use omm::parse_omm_json;
 pub use propagate::StateVector;
 pub use size::{SizeEstimate, SizeSource, SizeVerdict};
 pub use stats::Stats;
+pub use summary::ObjectSummary;
 pub use tle::parse_tle_text;
 
 /// 解析结果:成功的记录 + 逐条错误(单条失败不影响整体)。

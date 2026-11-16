@@ -32,6 +32,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p orbitscope -- --help
+cargo run -p orbitscope -- -c <配置> serve --sim-time 2024-01-01T12:30:00Z   # 用 testdata 演示服务
 cargo run -p orbitscope -- -c <配置> list --at 2024-01-01T12:30:00Z --any-age   # 配合 testdata 的 files 源
 cargo bench -p orbit-core
 cargo run -p orbit-core --example demo -- testdata/spacetrack_gp.json 2024-01-01T12:30:00Z
@@ -52,6 +53,8 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - SGP4 使用 sgp4 crate 的默认(改进)模式,而非 AFSPC 兼容模式(差异数十米,见 ADR-009)。
 - `config/orbitscope.example.toml` 必须与代码默认值一致(有单元测试校验);新增配置项时同步更新。
 - CLI 端到端测试只使用 `[sources.files]` 指向 testdata,并禁用 CelesTrak。
+- 服务端集成测试在 127.0.0.1:0 上启动真实服务,用 `time_offset` 把时钟拨到 testdata 的历元附近。
+- WS 帧格式(`orbit-server/src/frame.rs`)变更时必须升级版本号并同步 `docs/03-design.md` 5.3 节与前端解码。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
 ## 数据源规则(必须遵守)
@@ -74,6 +77,6 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - [x] M1 orbit-core(44 个测试;基准:3 万物体单线程 ~30 ms,4 核并行 ~8 ms)
 - [x] M2 orbit-sources(26 个测试,全部基于 wiremock;CelesTrak 真实接口尚未在本地验证)
 - [x] M3 CLI(`fetch/list/show/export/stats/config`,TOML 配置;10 个端到端测试)
-- [ ] M4 orbit-server
+- [x] M4 orbit-server(REST + WebSocket OSF1 帧、随机分钟调度、token/本机写鉴权;15 个测试)
 - [ ] M5 Web 前端
 - [ ] M6 打包发布

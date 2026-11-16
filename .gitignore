@@ -2,3 +2,5 @@
 *.local.toml
 .env
 /cache
+/orbitscope-src.zip
+/orbitscope.bundle

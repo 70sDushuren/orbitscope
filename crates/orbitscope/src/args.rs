@@ -1,6 +1,6 @@
 //! 命令行参数:通用过滤参数、时间解析。
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Utc};
 use clap::{Args, ValueEnum};
 use orbit_core::{AltitudeMode, Filter, ObjectType, UnknownSizePolicy};
@@ -145,39 +145,14 @@ impl FilterArgs {
     }
 }
 
-/// 解析时间参数:`now`、RFC3339(如 `2024-01-01T12:00:00Z`),或相对当前时间的偏移
-/// (如 `+90m`、`-2h`、`+1d`、`+30s`)。
+/// 解析时间参数(见 [`orbit_core::time::parse_time_arg`])。
 pub fn parse_time(s: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
-    let s = s.trim();
-    if s.eq_ignore_ascii_case("now") {
-        return Ok(now);
-    }
-    if let Some(sign) = s.chars().next().filter(|c| *c == '+' || *c == '-') {
-        let body = &s[1..];
-        let (num, unit) = body.split_at(body.len().saturating_sub(1));
-        let n: i64 = num.parse().map_err(|_| anyhow!("无效的时间偏移 {s:?}"))?;
-        let d = match unit {
-            "s" => Duration::seconds(n),
-            "m" => Duration::minutes(n),
-            "h" => Duration::hours(n),
-            "d" => Duration::days(n),
-            _ => bail!("时间偏移单位应为 s/m/h/d: {s:?}"),
-        };
-        return Ok(if sign == '+' { now + d } else { now - d });
-    }
-    DateTime::parse_from_rfc3339(s)
-        .map(|t| t.with_timezone(&Utc))
-        .map_err(|e| anyhow!("无法解析时间 {s:?}: {e}(支持 now、RFC3339、+90m/-2h/+1d)"))
+    Ok(orbit_core::time::parse_time_arg(s, now)?)
 }
 
-/// 解析时长参数,如 `30s`、`5m`、`2h`。
+/// 解析时长参数(见 [`orbit_core::time::parse_duration_arg`])。
 pub fn parse_duration(s: &str) -> Result<Duration> {
-    let t = parse_time(&format!("+{}", s.trim()), DateTime::<Utc>::UNIX_EPOCH)?;
-    let d = t - DateTime::<Utc>::UNIX_EPOCH;
-    if d <= Duration::zero() {
-        bail!("时长必须为正: {s:?}");
-    }
-    Ok(d)
+    Ok(orbit_core::time::parse_duration_arg(s)?)
 }
 
 #[cfg(test)]

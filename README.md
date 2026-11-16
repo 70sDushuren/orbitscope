@@ -7,7 +7,7 @@
 - 过滤:高度范围(默认 100–1000 km)、最小尺寸(默认 10 cm,基于 RCS 估算)、类型、国家、搜索
 - 展示:Web 3D 地球(CesiumJS)、列表、详情与轨迹、统计;CLI 与 REST/WebSocket API
 
-> 状态:M1 核心计算库、M2 数据源层、M3 命令行工具已完成;Web 服务(M4)与前端(M5)开发中。见 [docs/](docs/)。
+> 状态:M1 核心计算库、M2 数据源层、M3 命令行工具、M4 Web 服务已完成;3D 前端(M5)开发中。见 [docs/](docs/)。
 
 ## 快速开始
 
@@ -22,6 +22,7 @@ cargo build --release
 ./target/release/orbitscope export -f csv -o leo.csv
 ./target/release/orbitscope stats --bin 100
 ./target/release/orbitscope --offline list        # 只用缓存
+./target/release/orbitscope serve                 # Web 服务:http://127.0.0.1:8080/(REST + WebSocket)
 ```
 
 启用 Space-Track(完整编目,含全部碎片):在配置中设 `[sources.spacetrack] enabled = true`,并设置环境变量
