@@ -16,6 +16,7 @@
     <span class="stat"><span class="label">时间 (UTC)</span><span id="st-time">--</span></span>
     <span class="stat"><span class="label">显示</span><span id="st-shown">--</span></span>
     <span class="stat"><span class="label">编目</span><span id="st-catalog">--</span></span>
+    <span class="stat badge" id="st-replay" hidden>回放</span>
     <span class="stat" id="st-conn-wrap"><span class="dot" id="st-conn-dot"></span><span id="st-conn">连接中</span></span>
   </div>
   <div class="bar-buttons">
@@ -24,6 +25,31 @@
 </header>
 
 <aside id="left" class="panel" aria-label="过滤与统计">
+  <section>
+    <h2>时间与数据</h2>
+    <form id="settings-form" autocomplete="off">
+      <fieldset>
+        <legend>时间</legend>
+        <label class="check"><input type="radio" name="time_mode" value="live"> 实时</label>
+        <label class="check"><input type="radio" name="time_mode" value="fixed"> 指定时刻(UTC,时钟从该时刻继续走)</label>
+        <input type="datetime-local" name="fixed_time" step="1" aria-label="指定时刻(UTC)">
+      </fieldset>
+      <label>时刻策略(该时刻用哪组根数)
+        <select name="time_policy"></select>
+      </label>
+      <label>采集策略
+        <select name="collect_mode"></select>
+      </label>
+      <p class="muted small" id="collect-hint"></p>
+      <p class="hint" id="settings-error" role="alert"></p>
+      <div class="buttons">
+        <button type="submit" class="primary">应用设置</button>
+      </div>
+    </form>
+    <p class="small provenance" id="provenance"></p>
+    <p class="muted small" id="settings-persist"></p>
+  </section>
+
   <section>
     <h2>过滤</h2>
     <form id="filter-form" autocomplete="off">
@@ -77,6 +103,10 @@
     <h2>数据源</h2>
     <ul id="sources" class="sources"></ul>
     <p class="muted small" id="refresh-info"></p>
+    <details id="fetches-wrap" hidden>
+      <summary>最近的采集记录</summary>
+      <table id="fetches" class="table"><thead><tr><th>获取时间 (UTC)</th><th>资源</th><th>方式</th></tr></thead><tbody></tbody></table>
+    </details>
   </section>
   <p class="muted small footnote">尺寸为雷达截面积(RCS)推算的等效直径估算值;公开编目在近地轨道的门限约 10 cm。</p>
 </aside>

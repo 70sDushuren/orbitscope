@@ -124,6 +124,19 @@ summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
 .sources li { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
 .sources .dot { position: relative; top: 1px; }
 
+/* 时间与数据 */
+input[type=datetime-local] {
+  width: 100%; margin-top: 4px; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 8px; color: var(--text-primary);
+}
+input[type=datetime-local]:disabled { color: var(--text-muted); }
+fieldset label.check { margin-bottom: 4px; }
+.provenance { margin: 8px 0 0; color: var(--text-secondary); }
+.badge {
+  padding: 1px 8px; border-radius: 999px; border: 1px solid var(--warning); color: var(--warning); font-size: 12px;
+}
+.badge[hidden] { display: none; }
+
 /* 详情面板 */
 .panel-head { display: flex; align-items: flex-start; gap: 8px; }
 .panel-head h2 { flex: 1; margin: 0; word-break: break-word; }

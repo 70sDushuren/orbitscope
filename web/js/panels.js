@@ -123,6 +123,11 @@ const ORIGIN = { network: '已下载', not_modified: '服务器确认未更新',
 
 /** 数据源状态列表(状态点 + 文字,不只依赖颜色)。 */
 export function renderSources(list, info, status) {
+  if (!status.sources.length && status.settings && status.settings.collect_mode !== 'serve') {
+    list.replaceChildren(el('li', { class: 'muted' }, '本服务不联网采集,数据来自本地历史(见下方采集记录)。'));
+    info.textContent = '';
+    return;
+  }
   list.replaceChildren(
     ...status.sources.map((s) => {
       const stale = s.resources.some((r) => r.origin.kind === 'stale_cache');
@@ -135,7 +140,11 @@ export function renderSources(list, info, status) {
     }),
   );
   const sch = status.schedule;
-  info.textContent = sch.next_refresh ? `下次检查更新:${new Date(sch.next_refresh).toLocaleString()}` : '';
+  info.textContent = sch.next_refresh
+    ? `下次检查更新:${new Date(sch.next_refresh).toLocaleString()}`
+    : sch.next_reload
+      ? `下次从本地重新加载:${new Date(sch.next_reload).toLocaleString()}`
+      : '';
 }
 
 function fmtNum(v, d) {

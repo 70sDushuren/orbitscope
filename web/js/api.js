@@ -28,5 +28,12 @@ export const api = {
     });
     return getJson(`/api/v1/objects?${p}`);
   },
+  settings: () => getJson('/api/v1/settings'),
+  putSettings: (body) =>
+    getJson('/api/v1/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   stats: (queryString, binKm) => getJson(`/api/v1/stats?${queryString}&bin_km=${binKm}`),
 };

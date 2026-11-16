@@ -6,6 +6,7 @@ import { Globe, loadCesium } from './globe.js';
 import {
   n, renderDetails, renderHistogram, renderLive, renderSources, renderTypeBars, renderTypeChecks,
 } from './panels.js';
+import { readSettings, renderFetches, renderProvenance, renderSettings, updateCollectHint } from './settings.js';
 import { Stream } from './stream.js';
 
 const $ = (id) => document.getElementById(id);
@@ -60,8 +61,11 @@ async function refreshStatus() {
   try {
     const s = await api.status();
     state.catalogTotal = s.objects;
+    state.settings = s.settings;
     $('st-catalog').textContent = n(s.objects);
     renderSources($('sources'), $('refresh-info'), s);
+    renderProvenance($('provenance'), $('settings-persist'), s);
+    renderFetches($('fetches-wrap'), $('fetches'), s.recent_fetches || []);
   } catch {
     /* 下次再试 */
   }
@@ -202,6 +206,37 @@ async function main() {
     fillForm(form, state.defaultFilter);
     applyFilter(readForm(form), { persist: false });
   }
+
+  // 时间与数据设置
+  const sform = $('settings-form');
+  try {
+    state.settings = await api.settings();
+    renderSettings(sform, state.settings);
+  } catch (e) {
+    $('settings-error').textContent = `无法读取设置:${e.message}`;
+  }
+  sform.collect_mode.addEventListener('change', () => updateCollectHint(sform));
+  for (const r of sform.querySelectorAll('input[name=time_mode]')) {
+    r.addEventListener('change', () => (sform.fixed_time.disabled = r.value !== 'fixed' || !r.checked));
+  }
+  sform.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    $('settings-error').textContent = '';
+    try {
+      const patch = readSettings(sform, state.settings);
+      if (Object.keys(patch).length === 0) return;
+      state.settings = await api.putSettings(patch);
+      renderSettings(sform, state.settings);
+      // 服务端在后台按新设置重建编目;稍后刷新状态与统计
+      setTimeout(refreshStatus, 800);
+      setTimeout(() => {
+        refreshStatus();
+        refreshStats();
+      }, 2500);
+    } catch (e) {
+      $('settings-error').textContent = e.message;
+    }
+  });
 
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
