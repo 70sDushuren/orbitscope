@@ -1,6 +1,7 @@
 name: Release
 
-# 构建各平台二进制并发布到 GitHub Releases。三种触发方式:
+# 构建各平台二进制并发布到 GitHub Releases,同时构建多架构 Docker 镜像(amd64 / arm64)发布到
+# GitHub Container Registry(ghcr.io/<所有者>/<仓库>:<版本号> 与 :latest)。三种触发方式:
 #   1. 推荐:Actions → "Prepare release" 手动运行,输入版本号;它会自动补译多语言、更新版本号、打标签并调用本工作流。
 #   2. 手动推送标签:git tag v0.2.1 && git push origin v0.2.1(要求多语言译文已是最新,否则发布失败)。
 #   3. 已有标签发布失败时:Actions → Release → Run workflow,输入该标签重新构建并发布。
@@ -47,6 +48,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, archive: tar.gz }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, archive: tar.gz }
           - { os: macos-15, target: aarch64-apple-darwin, archive: tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     steps:
@@ -71,7 +73,7 @@ jobs:
           if [ "${{ matrix.archive }}" = "zip" ]; then 7z a "$name.zip" "$name" >/dev/null; else tar -czf "$name.tar.gz" "$name"; fi
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.target }}
+          name: bin-${{ matrix.target }}
           path: dist/*.${{ matrix.archive }}
 
   release:
@@ -80,6 +82,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
+          pattern: bin-*
           path: dist
           merge-multiple: true
       - name: Checksums
@@ -89,3 +92,89 @@ jobs:
           tag_name: ${{ env.TAG }}
           files: dist/*
           generate_release_notes: true
+
+  # ---------------------------------------------------------------- Docker 镜像
+  # 每个架构在各自的原生 runner 上构建(不用模拟器,Rust 编译快得多),按摘要推送;
+  # 再由 docker-manifest 把两个架构合并成一个多架构标签。
+  docker:
+    name: Docker image (${{ matrix.platform }})
+    needs: i18n
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, platform: linux/amd64, arch: amd64 }
+          - { os: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Image name (registry names must be lowercase)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.title=OrbitScope
+            org.opencontainers.image.description=Near-real-time monitor for objects in low Earth orbit
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.TAG }}
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-manifest:
+    name: Docker image (multi-arch tags)
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Image name (registry names must be lowercase)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push the multi-arch tags
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          version="${TAG#v}"
+          tags=(-t "$IMAGE:$version")
+          # 正式版本(版本号不带 "-" 后缀)同时更新 latest
+          case "$version" in *-*) ;; *) tags+=(-t "$IMAGE:latest") ;; esac
+          docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$version"

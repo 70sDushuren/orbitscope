@@ -1,0 +1,32 @@
+# Dependabot:每周检查依赖更新并开 PR(CI 会在 PR 上运行);有安全公告时会及时开 PR。
+# 小版本 / 补丁更新合并成一个 PR,大版本更新单独开,便于逐个评估。
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      rust-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /scripts/i18n
+    schedule:
+      interval: weekly
+    groups:
+      i18n-tool:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

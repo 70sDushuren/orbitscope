@@ -1,0 +1,46 @@
+name: Security audit
+
+# 依赖安全检查:对照 RustSec 公告库检查 Cargo.lock,对照 npm 公告检查多语言工具的依赖。
+# 每周一运行一次(新公告可能在代码没有变化时出现);依赖清单变化时也运行;可手动运行。
+on:
+  schedule:
+    - cron: "23 3 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - scripts/i18n/package*.json
+      - .github/workflows/audit.yml
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - scripts/i18n/package*.json
+      - .github/workflows/audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: Rust dependencies (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  npm-audit:
+    name: i18n tool dependencies (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - working-directory: scripts/i18n
+        run: npm audit --audit-level=high

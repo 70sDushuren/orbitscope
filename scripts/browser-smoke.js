@@ -1,6 +1,7 @@
 // 前端冒烟测试(Playwright + Chromium)。
 //
-// 用法:先启动服务(建议用 testdata 与 --sim-time),再运行:
+// 一步运行(构建好二进制后):scripts/smoke.sh(CI 也用它;自动准备 testdata、启动服务并运行本脚本)。
+// 或手动:先启动服务(用 testdata 与 --sim-time 2024-01-01T12:30:00Z),再运行:
 //   node scripts/browser-smoke.js http://127.0.0.1:8080 /tmp/shots
 // 需要可 require('playwright') 的环境。WebGL 使用 SwiftShader 软件渲染,帧率不代表真实 GPU。
 const { chromium } = require('playwright');
@@ -40,6 +41,25 @@ const OUT = process.argv[3] || '.';
   await page.waitForTimeout(2000);
   console.log('详情:', await page.textContent('#d-name'), await page.textContent('#d-alt'));
   await page.screenshot({ path: `${OUT}/details.png` });
+
+  // "指定时刻"只对本页面生效:切到过去的时刻,时钟从该时刻继续走,再回到实时
+  const liveTime = await page.textContent('#st-time');
+  await page.check('input[name=time_mode][value=fixed]');
+  await page.evaluate(() => {
+    const i = document.querySelector('input[name=fixed_time]');
+    i.value = '2024-01-01T12:15:00';
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.click('#settings-form button[type=submit]');
+  await page.waitForFunction(() => window.orbitscope.state.timeMode === 'fixed' && document.getElementById('st-time').textContent.includes('12:15:'), null, { timeout: 15000 })
+    .catch(() => fail('未能切换到指定时刻'));
+  if (await page.evaluate(() => document.getElementById('st-replay').hidden)) fail('指定时刻下未显示回放标记');
+  if (await page.textContent('#settings-error')) fail(`切换时刻不应报错: ${await page.textContent('#settings-error')}`);
+  await page.check('input[name=time_mode][value=live]');
+  await page.click('#settings-form button[type=submit]');
+  await page.waitForFunction(() => window.orbitscope.state.timeMode === 'live' && !document.getElementById('st-time').textContent.includes('12:15:'), null, { timeout: 15000 })
+    .catch(() => fail('未能回到实时'));
+  console.log('时间切换:', liveTime, '→ 指定时刻 → ', await page.textContent('#st-time'));
 
   // 非法过滤条件应在表单内提示
   await page.fill('input[name=alt_min_km]', '5000');

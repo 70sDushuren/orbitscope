@@ -25,18 +25,60 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - name: Check frontend JavaScript syntax
-        run: for f in web/js/*.js scripts/*.js scripts/i18n/*.mjs; do node --check "$f"; done
+        run: |
+          for f in web/js/*.js scripts/*.js scripts/i18n/*.mjs; do node --check "$f"; done
+          bash -n scripts/smoke.sh
       - name: Check translations (warning only; releases require them to be current)
         run: node scripts/i18n/i18n.mjs check --warn
 
   msrv:
-    name: MSRV (1.88)
+    name: MSRV (1.89)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
+
+  frontend:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    env:
+      # 与 Dockerfile 中的 CESIUM_VERSION / CESIUM_SHA256 保持一致
+      CESIUM_VERSION: 1.146.0
+      CESIUM_SHA256: 9e4166f2d61e1088c94c1161ab92493750959160e5a37893a8b8c50c494048d5
+      PLAYWRIGHT_VERSION: 1.63.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p orbitscope
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Playwright (Chromium) and CesiumJS
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir smoke && cd smoke
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "playwright@${PLAYWRIGHT_VERSION}"
+          npx playwright install --with-deps chromium
+          npm pack "cesium@${CESIUM_VERSION}" > /dev/null
+          echo "${CESIUM_SHA256}  cesium-${CESIUM_VERSION}.tgz" | sha256sum -c -
+          tar -xzf "cesium-${CESIUM_VERSION}.tgz" package/Build/Cesium
+      - name: Run the web UI in a real browser (testdata, no network sources)
+        env:
+          CESIUM_DIR: ${{ runner.temp }}/smoke/package/Build/Cesium
+          NODE_PATH: ${{ runner.temp }}/smoke/node_modules
+          SMOKE_OUT: ${{ runner.temp }}/smoke-out
+        run: scripts/smoke.sh
+      - name: Upload screenshots and server log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-smoke
+          path: ${{ runner.temp }}/smoke-out
+          if-no-files-found: ignore
 
   docker:
     name: Docker image builds

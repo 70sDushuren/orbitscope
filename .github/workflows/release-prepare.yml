@@ -3,7 +3,7 @@ name: Prepare release
 # 每次发布的入口(Actions → Prepare release → Run workflow,输入版本号):
 #   1. 用 Claude API 自动翻译界面中新增或改动的文字(英语、繁體中文(香港));
 #   2. 更新版本号与 CHANGELOG,提交并打标签;
-#   3. 调用 Release 工作流构建并发布三平台二进制。
+#   3. 调用 Release 工作流构建并发布各平台二进制与 Docker 镜像。
 # 需要在仓库 Settings → Secrets and variables → Actions 中添加 ANTHROPIC_API_KEY
 # (译文已是最新时不会调用 API,也就不需要该密钥)。
 on:
@@ -89,3 +89,4 @@ jobs:
       tag: ${{ needs.prepare.outputs.tag }}
     permissions:
       contents: write
+      packages: write
