@@ -7,7 +7,27 @@
 - 过滤:高度范围(默认 100–1000 km)、最小尺寸(默认 10 cm,基于 RCS 估算)、类型、国家、搜索
 - 展示:Web 3D 地球(CesiumJS)、列表、详情与轨迹、统计;CLI 与 REST/WebSocket API
 
-> 状态:M1 核心计算库、M2 数据源层已完成。见 [docs/](docs/)。
+> 状态:M1 核心计算库、M2 数据源层、M3 命令行工具已完成;Web 服务(M4)与前端(M5)开发中。见 [docs/](docs/)。
+
+## 快速开始
+
+```bash
+cargo build --release
+./target/release/orbitscope config init          # 生成 ~/.config/orbitscope/config.toml(可选)
+./target/release/orbitscope fetch                # 下载并缓存数据(遵守数据源刷新间隔)
+./target/release/orbitscope list                 # 默认:100–1000 km、≥10 cm
+./target/release/orbitscope list --alt 400..450 --type debris --sort alt
+./target/release/orbitscope list --alt-mode instantaneous --at +30m
+./target/release/orbitscope show 25544 --track 90m --step 5m
+./target/release/orbitscope export -f csv -o leo.csv
+./target/release/orbitscope stats --bin 100
+./target/release/orbitscope --offline list        # 只用缓存
+```
+
+启用 Space-Track(完整编目,含全部碎片):在配置中设 `[sources.spacetrack] enabled = true`,并设置环境变量
+`ORBITSCOPE_SPACETRACK_USER` / `ORBITSCOPE_SPACETRACK_PASSWORD`。
+
+## 文档
 
 | 文档 | 内容 |
 |------|------|

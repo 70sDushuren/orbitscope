@@ -31,7 +31,8 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
-cargo run -p orbitscope -- serve --config config/orbitscope.example.toml
+cargo run -p orbitscope -- --help
+cargo run -p orbitscope -- -c <配置> list --at 2024-01-01T12:30:00Z --any-age   # 配合 testdata 的 files 源
 cargo bench -p orbit-core
 cargo run -p orbit-core --example demo -- testdata/spacetrack_gp.json 2024-01-01T12:30:00Z
 cargo run -p orbit-sources --example fetch -- --offline        # 只用缓存
@@ -49,6 +50,8 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - 尺寸始终是"估算",对外数据必须带 `size_source` 字段。
 - 测试中允许 `unwrap()`(见 `clippy.toml`);引用文献参考值的测试模块可 `allow(clippy::inconsistent_digit_grouping)`。
 - SGP4 使用 sgp4 crate 的默认(改进)模式,而非 AFSPC 兼容模式(差异数十米,见 ADR-009)。
+- `config/orbitscope.example.toml` 必须与代码默认值一致(有单元测试校验);新增配置项时同步更新。
+- CLI 端到端测试只使用 `[sources.files]` 指向 testdata,并禁用 CelesTrak。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
 ## 数据源规则(必须遵守)
@@ -70,7 +73,7 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - [x] M0 规划文档
 - [x] M1 orbit-core(44 个测试;基准:3 万物体单线程 ~30 ms,4 核并行 ~8 ms)
 - [x] M2 orbit-sources(26 个测试,全部基于 wiremock;CelesTrak 真实接口尚未在本地验证)
-- [ ] M3 CLI
+- [x] M3 CLI(`fetch/list/show/export/stats/config`,TOML 配置;10 个端到端测试)
 - [ ] M4 orbit-server
 - [ ] M5 Web 前端
 - [ ] M6 打包发布

@@ -174,6 +174,25 @@ impl FetchAllResult {
 > **未能核实**:CelesTrak 在本项目的云端开发环境中返回 500 / 连接被重置(疑似拒绝数据中心 IP),
 > 分组名与 SATCAT 路径依据其公开文档格式实现,均可在配置中修改,首次在本地运行时需确认。
 
+## 4.5 命令行(orbitscope)
+
+| 子命令 | 作用 |
+|-------|------|
+| `fetch` | 按刷新间隔获取全部数据源并写缓存,打印各资源来源(下载 / 304 / 缓存 / 旧缓存) |
+| `list` | 过滤 + 外推,表格 / JSON / CSV 输出;`--sort`、`--desc`、`-n` |
+| `show <NORAD>` | 详情、指定时刻状态、`--track 90m --step 1m` 地面轨迹 |
+| `export` | 同 `list`,不限条数,CSV / JSON,`-o` 写文件 |
+| `stats` | 按类型、国家计数与平均高度直方图 |
+| `config show / init` | 显示生效配置 / 生成带注释的示例配置 |
+
+全局参数:`-c/--config`(或 `ORBITSCOPE_CONFIG`)、`--offline`(只用缓存)、`--quiet`、`-v`。
+过滤参数覆盖配置文件 `[filter]`:`--alt MIN..MAX`、`--alt-mode`、`--min-size`、`--unknown-size`、`--type`(可重复)、
+`--country`、`--inc-min/--inc-max`、`-q`、`--max-age` / `--any-age`。
+时间参数 `--at` 支持 `now`、RFC3339、相对偏移(`+90m`、`-2h`、`+1d`)。
+
+配置查找顺序:`--config` → `./orbitscope.toml` → `<用户配置目录>/orbitscope/config.toml` → 默认值。
+数据源状态输出到 stderr,数据输出到 stdout,便于管道处理。
+
 ## 5. 服务端设计(orbit-server)
 
 ### 5.1 运行时任务

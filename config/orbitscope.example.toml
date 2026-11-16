@@ -1,0 +1,67 @@
+# OrbitScope 示例配置
+#
+# 复制为 ./orbitscope.toml 或 ~/.config/orbitscope/config.toml 后按需修改;
+# 所有字段都可省略(使用默认值)。本文件中的取值即为默认值。
+#
+# 注意:Space-Track 账号密码【不要】写在这里,请使用环境变量:
+#   ORBITSCOPE_SPACETRACK_USER / ORBITSCOPE_SPACETRACK_PASSWORD
+
+[filter]
+# 高度范围(km)
+alt_min_km = 100.0
+alt_max_km = 1000.0
+# 高度判据:
+#   orbit-overlap  轨道 [近地点, 远地点] 与范围有交集(默认)
+#   orbit-within   轨道完全位于范围内
+#   instantaneous  当前瞬时高度位于范围内
+altitude_mode = "orbit-overlap"
+# 最小等效直径(cm),由 RCS 估算;0 表示不过滤
+min_size_cm = 10.0
+# 尺寸无法判定(未知或 RCS 分档跨越门限)时:include / exclude
+unknown_size = "include"
+# 物体类型,空表示全部。可选:"PAYLOAD"、"ROCKET BODY"、"DEBRIS"、"UNKNOWN"
+object_types = []
+# 国家/所有者代码,空表示全部,例如 ["US", "PRC", "CIS"]
+countries = []
+# inclination_min_deg = 0.0
+# inclination_max_deg = 180.0
+# query = "STARLINK"
+# 根数龄期上限(天),超过视为过期;删除此行表示不限
+max_epoch_age_days = 14.0
+
+[sources]
+# 缓存目录,默认为用户缓存目录下的 orbitscope
+# cache_dir = "/var/cache/orbitscope"
+
+[sources.celestrak]
+enabled = true
+base_url = "https://celestrak.org"
+groups = ["active", "cosmos-1408-debris", "fengyun-1c-debris", "iridium-33-debris", "cosmos-2251-debris"]
+# GP 刷新间隔(分钟),硬下限 60
+refresh_minutes = 120
+# 下载 SATCAT 以补全类型、国家、数值 RCS
+satcat = true
+satcat_path = "/pub/satcat.csv"
+# 硬下限 720
+satcat_refresh_minutes = 1440
+
+[sources.spacetrack]
+# 需要免费账号;启用后可获得含全部碎片的完整编目
+enabled = false
+base_url = "https://www.space-track.org"
+# 官方规定 GP 每小时最多 1 次,硬下限 60
+refresh_minutes = 60
+# 服务端预筛:只下载近地点低于该高度(km)的物体;删除此行表示全量
+max_periapsis_km = 2000.0
+max_epoch_age_days = 10
+# 官方上限 30 次/分、300 次/时
+requests_per_minute = 20
+requests_per_hour = 200
+
+[sources.files]
+# 本地 TLE / 3LE / OMM JSON 文件
+paths = []
+
+[server]
+bind = "127.0.0.1:8080"
+tick_ms = 1000
