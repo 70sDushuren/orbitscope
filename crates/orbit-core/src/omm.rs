@@ -185,6 +185,7 @@ impl RawOmm {
             elements,
             meta,
             source,
+            fetched_at: None,
         })
     }
 }

@@ -63,6 +63,7 @@ pub fn parse_tle_text(text: &str, source: DataSource) -> ParseOutcome {
                         elements,
                         meta,
                         source,
+                        fetched_at: None,
                     });
                 }
                 Err(_) => out.errors.push(RecordError {

@@ -190,11 +190,14 @@ impl ObjectMeta {
 }
 
 /// 一条 GP 记录:平根数 + 元数据 + 来源。是各数据源解析后的统一中间格式。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpRecord {
     pub elements: sgp4::Elements,
     pub meta: ObjectMeta,
     pub source: DataSource,
+    /// 该记录所在资源的获取时间(数据源设置;未知时为 `None`)
+    #[serde(default)]
+    pub fetched_at: Option<DateTime<Utc>>,
 }
 
 impl GpRecord {

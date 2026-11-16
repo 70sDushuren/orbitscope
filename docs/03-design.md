@@ -174,6 +174,59 @@ impl FetchAllResult {
 > **CelesTrak 已实测(2026-11-16,用户本地网络)**:默认分组与 SATCAT 获取成功,编目 19,575 个物体。
 > 本项目的云端开发环境访问 celestrak.org 会返回 500 / 连接被重置(疑似拒绝数据中心 IP),开发时勿在该环境反复请求。
 
+## 4.6 历史归档与采集(orbit-archive,v0.2)
+
+依赖方向:`orbitscope → orbit-server → orbit-archive → orbit-sources → orbit-core`。
+
+### 4.6.1 存储布局
+数据目录默认为用户数据目录下的 `orbitscope/`(macOS `~/Library/Application Support/orbitscope`,
+Linux `~/.local/share/orbitscope`),可用 `[archive] dir` 修改。与缓存目录分开:缓存可随时删除,归档是数据。
+
+```
+<archive_dir>/
+├── history.sqlite                 # 根数历史库
+└── snapshots/<资源>/<UTC 时间戳>.body.gz   # 完整快照(原始下载内容,gzip)
+```
+
+### 4.6.2 根数历史库(SQLite)
+```sql
+fetches(id, fetched_at_s, source, resource, origin, records, new_elsets)   -- 每个资源每次获取一行
+elsets(id, norad, epoch_s, source, first_seen_s, record_json,
+       UNIQUE(norad, epoch_s, source))                                       -- 每条根数只存一次
+-- 索引:(norad, first_seen_s)、(norad, epoch_s)、(first_seen_s)
+```
+- `record_json` 为合并元数据(SATCAT)后的完整 `GpRecord`(OMM 字段 + 类型、国家、RCS、发射/再入日期)。
+- `first_seen_s` 取该根数所在资源的获取时间(来自缓存元数据,不是写库时间),因此重放缓存不会改变历史。
+- WAL 模式 + `busy_timeout`,允许 `serve` 与 `collect` / `fetch` 并发访问;`auto_vacuum = INCREMENTAL`。
+
+### 4.6.3 时刻策略(as-of)
+对每个 NORAD 编号选一条根数:
+
+| 策略 | 选择规则 | 用途 |
+|------|---------|------|
+| `known-at` | `first_seen ≤ T` 中历元最新者 | "当时系统实际掌握的数据",结果可复现(默认) |
+| `nearest-epoch` | 全部根数中 `|epoch − T|` 最小者 | 回看过去时位置更准,但可能用到 T 之后才获取的数据 |
+| `latest` | 全部根数中历元最新者 | 与 v0.1 行为相同 |
+
+历元相同时按数据源优先级(Space-Track > CelesTrak > 文件)。选出的记录再经 `Catalog::build` 构建编目;
+`Provenance { policy, data_time, records, first_seen_min, first_seen_max }` 随编目一起返回并展示。
+历史库关闭或为空时回退到 v0.1 行为(只用缓存中的最新数据)。
+
+### 4.6.4 容量控制
+- 快照:`max_files`、`max_total_mb`(0 = 不限),每次写入后按时间从旧到新删除直至满足。
+- 历史库:`retain_days`、`max_total_mb`(0 = 不限)。删除 `first_seen` 最旧的根数,但**每个物体的最新一条永不删除**;
+  删除后执行增量 vacuum。每次采集后执行,也可 `orbitscope history prune` 手动执行。
+
+### 4.6.5 采集策略(`[collect] mode`)
+| 模式 | 谁联网采集 | `serve` 的行为 |
+|------|-----------|---------------|
+| `serve`(默认) | `orbitscope serve` 的调度器(每小时随机分钟) | 采集 + 展示 |
+| `daemon` | 常驻进程 `orbitscope collect`(同样的调度规则) | 只读本地历史 / 缓存,每 5 分钟重新加载 |
+| `external` | 系统定时任务运行 `orbitscope fetch` | 同上 |
+
+Web 界面"设置"可切换本进程的采集模式(运行期生效;要持久化需写入配置文件)。各进程都受数据源缓存间隔约束,
+即使误配置成多个进程同时采集也不会超频。`deploy/` 提供 launchd(macOS)与 systemd(Linux)示例。
+
 ## 4.5 命令行(orbitscope)
 
 | 子命令 | 作用 |
@@ -326,6 +379,10 @@ tick_ms = 1000
 | 005 | WS 二进制帧,ECEF f32 | JSON、经纬高 | 体积小(16B/物体),前端无需再转换;f32 在 7000 km 量级精度约 0.5 m,足够 |
 | 006 | 前端 CesiumJS + 离线影像 | three.js / globe.gl / MapLibre | 内建地球、相机、时间系统与大量点渲染;离线影像免 token |
 | 015 | 前端不引入构建工具,CesiumJS 默认走 CDN、可配置本地目录 | npm + 打包器;把 Cesium(23 MB)编进二进制 | 保持单一 Rust 工具链;二进制保持小巧;离线场景用 `cesium_dir` 满足 |
+| 016 | 历史以"根数"为单位去重存 SQLite,另存有上限的原始快照 | 只存完整快照 / 只存数据库 | 根数去重后每天只增量存储;快照满足原样审计,且有容量上限 |
+| 017 | `first_seen` 取资源的获取时间,而非写库时间 | 写库时间 | 从缓存重放不会伪造"新获取";`known-at` 结果可复现 |
+| 018 | 时刻策略是服务端级设置(Web 可切换),不按 WS 连接区分 | 每个连接各自的编目 | 保持"每 tick 全量外推一次"的共享计算(ADR-013) |
+| 019 | 采集策略三选一,非 `serve` 模式下 Web 服务只读本地数据 | 只允许 serve 采集 | 单机可常驻采集而不开 Web;SQLite WAL 支持多进程读写 |
 | 007 | 尺寸 = RCS 等效直径估算,区间化 | 只用分档 / 忽略尺寸 | 公开数据只有 RCS;区间化可诚实表达不确定性 |
 | 008 | 默认数据源 CelesTrak,Space-Track 可选 | 只用 Space-Track | 免注册即可开箱运行;需要全量碎片时再配账号 |
 | 009 | SGP4 使用 sgp4 crate 默认(改进)模式 | AFSPC 兼容模式 | crate 推荐;与 AFSPC 参考向量差异仅数十米,远小于 SGP4 的 km 级误差 |

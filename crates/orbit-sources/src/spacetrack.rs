@@ -210,6 +210,7 @@ impl SpaceTrackSource {
         .await?;
 
         let mut batch = SourceBatch::new(DataSource::SpaceTrack, "space-track");
+        let fetched_at = status.fetched_at;
         batch.resources.push(status);
         let out = parse_omm_json(&body, DataSource::SpaceTrack).map_err(|e| SourceError::Parse {
             what: "space-track gp".into(),
@@ -217,6 +218,9 @@ impl SpaceTrackSource {
         })?;
         batch.record_errors = out.errors.len();
         batch.records = out.records;
+        for r in &mut batch.records {
+            r.fetched_at = Some(fetched_at);
+        }
         Ok(batch)
     }
 }

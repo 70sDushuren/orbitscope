@@ -39,6 +39,12 @@ impl FileSource {
         let mut batch = SourceBatch::new(DataSource::File, "file");
         let mut last_err = None;
         for path in &self.cfg.paths {
+            // 本地文件的"获取时间"取文件修改时间
+            let mtime = tokio::fs::metadata(path)
+                .await
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(chrono::DateTime::<chrono::Utc>::from);
             let result = match tokio::fs::read_to_string(path).await {
                 Ok(text) => parse_any(&text),
                 Err(e) => Err(SourceError::File {
@@ -49,7 +55,10 @@ impl FileSource {
             match result {
                 Ok(out) => {
                     batch.record_errors += out.errors.len();
-                    batch.records.extend(out.records);
+                    batch.records.extend(out.records.into_iter().map(|mut r| {
+                        r.fetched_at = mtime;
+                        r
+                    }));
                 }
                 Err(e) => {
                     batch.notes.push(format!("{}: {e}", path.display()));

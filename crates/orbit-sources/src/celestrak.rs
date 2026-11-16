@@ -131,12 +131,16 @@ impl CelesTrakSource {
             let key = format!("celestrak/gp-{group}");
             match self.get(&key, &url, self.refresh(), mode, now).await {
                 Ok((body, status)) => {
+                    let fetched_at = status.fetched_at;
                     batch.resources.push(status);
                     // CelesTrak 对未知分组等情况返回纯文本(如 "No GP data found")
                     match parse_omm_json(&body, DataSource::CelesTrak) {
                         Ok(out) => {
                             batch.record_errors += out.errors.len();
-                            batch.records.extend(out.records);
+                            batch.records.extend(out.records.into_iter().map(|mut r| {
+                                r.fetched_at = Some(fetched_at);
+                                r
+                            }));
                         }
                         Err(e) => {
                             let snippet: String = body.chars().take(80).collect();

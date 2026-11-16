@@ -102,6 +102,24 @@ impl Cache {
         }
     }
 
+    /// 同步读取(供 `spawn_blocking` 中的归档等同步代码使用)。
+    pub fn read_blocking(&self, key: &str) -> Result<Option<(CacheMeta, String)>, SourceError> {
+        let (body_path, meta_path) = self.paths(key);
+        let meta = match std::fs::read_to_string(&meta_path) {
+            Ok(s) => match serde_json::from_str::<CacheMeta>(&s) {
+                Ok(m) => m,
+                Err(_) => return Ok(None),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io_err(&meta_path, e)),
+        };
+        match std::fs::read_to_string(&body_path) {
+            Ok(body) => Ok(Some((meta, body))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(io_err(&body_path, e)),
+        }
+    }
+
     async fn write_atomic(path: &Path, data: &[u8]) -> Result<(), SourceError> {
         let tmp = path.with_extension("tmp");
         tokio::fs::write(&tmp, data).await.map_err(|e| io_err(&tmp, e))?;

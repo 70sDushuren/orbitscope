@@ -38,6 +38,7 @@ fn synthetic_records(n: usize) -> Vec<GpRecord> {
                 elements,
                 meta: ObjectMeta::default(),
                 source: DataSource::File,
+                fetched_at: None,
             }
         })
         .collect()
