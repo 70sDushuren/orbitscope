@@ -5,9 +5,9 @@ members = ["crates/orbit-core", "crates/orbit-server", "crates/orbit-sources", "
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = ""
+repository = "https://github.com/70sDushuren/orbitscope"
 
 [workspace.dependencies]
 orbit-core = { path = "crates/orbit-core" }
@@ -49,6 +49,7 @@ expect_used = "warn"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+strip = true
 
 [profile.bench]
 debug = true

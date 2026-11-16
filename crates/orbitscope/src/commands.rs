@@ -474,6 +474,31 @@ pub fn config_init(path: Option<PathBuf>, force: bool) -> Result<()> {
 
 // ---------------------------------------------------------------- serve
 
+/// 等待 Ctrl-C(SIGINT)或 SIGTERM(`docker stop`、systemd 停止服务时发送)。
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "无法监听 SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = term => {}
+    }
+}
+
 pub struct ServeOpts {
     pub bind: Option<String>,
     pub sim_time: Option<String>,
@@ -534,10 +559,7 @@ pub async fn serve(ctx: &Ctx, opts: ServeOpts) -> Result<()> {
     if !time_offset.is_zero() {
         eprintln!("模拟时间:服务端时钟偏移 {} 秒", time_offset.num_seconds());
     }
-    orbit_server::serve(options, sources, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
-    .await?;
+    orbit_server::serve(options, sources, shutdown_signal()).await?;
     eprintln!("服务已停止");
     Ok(())
 }

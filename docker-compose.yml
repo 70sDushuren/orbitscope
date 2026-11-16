@@ -1,0 +1,20 @@
+# docker compose up -d   →  http://127.0.0.1:8080/
+services:
+  orbitscope:
+    build: .
+    image: orbitscope:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - orbitscope-cache:/var/cache/orbitscope
+    environment:
+      # 启用 Space-Track 时:在同目录 .env 文件中设置这两个变量,并挂载开启了
+      # [sources.spacetrack] enabled = true 的配置文件
+      ORBITSCOPE_SPACETRACK_USER: ${ORBITSCOPE_SPACETRACK_USER:-}
+      ORBITSCOPE_SPACETRACK_PASSWORD: ${ORBITSCOPE_SPACETRACK_PASSWORD:-}
+      # 对外开放写接口时设置(至少 16 个字符)
+      ORBITSCOPE_API_TOKEN: ${ORBITSCOPE_API_TOKEN:-}
+      RUST_LOG: ${RUST_LOG:-info}
+volumes:
+  orbitscope-cache:

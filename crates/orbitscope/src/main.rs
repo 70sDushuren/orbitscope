@@ -143,7 +143,9 @@ fn init_logging(verbose: u8) {
     };
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default));
+    use std::io::IsTerminal;
     tracing_subscriber::fmt()
+        .with_ansi(std::io::stderr().is_terminal())
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .with_target(false)

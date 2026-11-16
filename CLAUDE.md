@@ -60,6 +60,9 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
   颜色只用 `app.css` 中的角色令牌,类型颜色改动须重新跑 dataviz 调色板校验(`--pairs all`,深色)。
 - 前端改动后用 `scripts/browser-smoke.js` 验证(服务用 testdata 或 `scripts/gen_synthetic.py`,加 `--sim-time 2024-01-01T12:30:00Z`)。
   本地 Cesium 可用 `npm pack cesium@1.146.0` 获取,配置 `server.cesium_dir`。
+- 发布:更新 `CHANGELOG.md` 与各 crate 版本号后打 `v*` 标签,Release 工作流自动构建三平台二进制。
+- `rust-version = "1.88"`(let-chains 需要);提高 MSRV 时同步 CI 的 msrv 任务。
+- 服务需同时响应 SIGINT 与 SIGTERM(容器 / systemd 停止服务依赖 SIGTERM)。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
 ## 数据源规则(必须遵守)
@@ -84,4 +87,4 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - [x] M3 CLI(`fetch/list/show/export/stats/config`,TOML 配置;10 个端到端测试)
 - [x] M4 orbit-server(REST + WebSocket OSF1 帧、随机分钟调度、token/本机写鉴权;15 个测试)
 - [x] M5 Web 前端(CesiumJS 3D 地球、过滤/搜索/统计/详情;浏览器冒烟测试 `scripts/browser-smoke.js`)
-- [ ] M6 打包发布
+- [x] M6 打包发布(Dockerfile 内置 Cesium、compose、systemd、CI / Release 工作流、使用手册、许可证;MSRV 1.88 已验证)

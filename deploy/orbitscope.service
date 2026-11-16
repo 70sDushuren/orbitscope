@@ -1,0 +1,30 @@
+# systemd 服务示例:
+#   sudo cp target/release/orbitscope /usr/local/bin/
+#   sudo useradd --system --home-dir /var/lib/orbitscope --create-home orbitscope
+#   sudo mkdir -p /etc/orbitscope && sudo cp config/orbitscope.example.toml /etc/orbitscope/config.toml
+#   sudo cp deploy/orbitscope.service /etc/systemd/system/ && sudo systemctl enable --now orbitscope
+# 凭据放在 /etc/orbitscope/env(权限 600),内容如:
+#   ORBITSCOPE_SPACETRACK_USER=...
+#   ORBITSCOPE_SPACETRACK_PASSWORD=...
+[Unit]
+Description=OrbitScope near-Earth orbit object monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=orbitscope
+Group=orbitscope
+Environment=ORBITSCOPE_CONFIG=/etc/orbitscope/config.toml
+Environment=XDG_CACHE_HOME=/var/lib/orbitscope/cache
+EnvironmentFile=-/etc/orbitscope/env
+ExecStart=/usr/local/bin/orbitscope serve
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/orbitscope
+
+[Install]
+WantedBy=multi-user.target

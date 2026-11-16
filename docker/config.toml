@@ -1,0 +1,13 @@
+# 容器内默认配置(/etc/orbitscope/config.toml)。
+# 可挂载自己的文件覆盖:-v ./my.toml:/etc/orbitscope/config.toml:ro
+# 完整选项见仓库中的 config/orbitscope.example.toml。
+
+[sources]
+cache_dir = "/var/cache/orbitscope"
+
+[server]
+# 容器内需监听所有地址,端口映射由 docker -p 控制。
+# 未设置 ORBITSCOPE_API_TOKEN 时,写操作(修改默认过滤、手动刷新)只允许容器内本机发起。
+bind = "0.0.0.0:8080"
+# 镜像已内置 CesiumJS,浏览器无需访问 CDN
+cesium_dir = "/opt/cesium"
