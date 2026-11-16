@@ -1,6 +1,6 @@
 # OrbitScope 使用手册
 
-> 适用版本 0.2.0。设计细节见 [03-design.md](03-design.md)。
+> 适用版本 0.2.1。设计细节见 [03-design.md](03-design.md)。
 
 ## 1. 安装
 
@@ -180,6 +180,9 @@ orbitscope serve                                      # Web 服务
 - **详情**:点击点或搜索结果,显示实时经纬高、速度、轨道参数、估算尺寸,以及一个周期的空间轨迹(实线)和星下点轨迹(虚线)。
 - **手机**:面板为底部抽屉,用右上角"面板"按钮切换。
 
+**界面语言**:顶部右侧的语言菜单可切换简体中文、English、繁體中文(香港);首次打开时按浏览器语言自动选择,
+之后记住你的选择。
+
 `serve` 参数:`--bind 0.0.0.0:8080`(覆盖配置)、`--sim-time <时刻>`(模拟时钟,用于回放旧数据或演示)。
 
 ### 6.1 CesiumJS 与离线使用
@@ -231,7 +234,21 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"alt_max_km": 600}' http://
 WebSocket 协议(订阅消息、元数据消息、二进制位置帧格式)见 [03-design.md](03-design.md) 第 5.3 节;
 Rust 解码实现在 `crates/orbit-server/src/frame.rs`,JavaScript 实现在 `web/js/stream.js`。
 
-## 8. 常见问题
+## 8. 发布(维护者)
+
+每次发布在 GitHub 上运行 **Actions → Prepare release → Run workflow**,输入版本号(如 `0.2.2`)。它会:
+
+1. 用 Claude API 自动翻译界面中新增或改动的文字(英语、繁體中文(香港));已有且未改动的译文保持不变;
+2. 更新版本号与 CHANGELOG(若没有该版本条目则补一条),提交到 `main` 并打 `vX.Y.Z` 标签;
+3. 构建 Linux / macOS / Windows 二进制并发布到 GitHub Releases。
+
+需要先在仓库 **Settings → Secrets and variables → Actions** 中添加 `ANTHROPIC_API_KEY`(没有待翻译条目时不会调用 API)。
+也可以本地运行 `node scripts/i18n/i18n.mjs translate`(先在 `scripts/i18n` 下 `npm ci`)。
+直接推送标签同样会发布,但译文不是最新时发布会失败。
+
+修改界面文字时只改 `web/i18n/zh-CN.json`(源语言);人工修订译文后运行 `node scripts/i18n/i18n.mjs stamp` 记录。
+
+## 9. 常见问题
 
 | 现象 | 处理 |
 |------|------|

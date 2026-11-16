@@ -8,42 +8,43 @@
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-<div id="globe" aria-label="3D 地球视图"></div>
+<div id="globe" data-i18n-aria-label="app.globeLabel" aria-label="3D 地球视图"></div>
 
 <header id="topbar">
   <div class="brand">OrbitScope</div>
   <div class="status" id="status">
-    <span class="stat"><span class="label">时间 (UTC)</span><span id="st-time">--</span></span>
-    <span class="stat"><span class="label">显示</span><span id="st-shown">--</span></span>
-    <span class="stat"><span class="label">编目</span><span id="st-catalog">--</span></span>
-    <span class="stat badge" id="st-replay" hidden>回放</span>
-    <span class="stat" id="st-conn-wrap"><span class="dot" id="st-conn-dot"></span><span id="st-conn">连接中</span></span>
+    <span class="stat"><span class="label" data-i18n="top.time">时间 (UTC)</span><span id="st-time">--</span></span>
+    <span class="stat"><span class="label" data-i18n="top.shown">显示</span><span id="st-shown">--</span></span>
+    <span class="stat"><span class="label" data-i18n="top.catalog">编目</span><span id="st-catalog">--</span></span>
+    <span class="stat badge" id="st-replay" data-i18n="top.replay" hidden>回放</span>
+    <span class="stat" id="st-conn-wrap"><span class="dot" id="st-conn-dot"></span><span id="st-conn" data-i18n="top.connecting">连接中</span></span>
   </div>
   <div class="bar-buttons">
-    <button type="button" id="btn-toggle-left" aria-controls="left" aria-expanded="true">面板</button>
+    <select id="lang-select" data-i18n-aria-label="app.language" aria-label="语言"></select>
+    <button type="button" id="btn-toggle-left" aria-controls="left" aria-expanded="true" data-i18n="top.panel">面板</button>
   </div>
 </header>
 
-<aside id="left" class="panel" aria-label="过滤与统计">
+<aside id="left" class="panel" data-i18n-aria-label="panel.left" aria-label="过滤与统计">
   <section>
-    <h2>时间与数据</h2>
+    <h2 data-i18n="settings.title">时间与数据</h2>
     <form id="settings-form" autocomplete="off">
       <fieldset>
-        <legend>时间</legend>
-        <label class="check"><input type="radio" name="time_mode" value="live"> 实时</label>
-        <label class="check"><input type="radio" name="time_mode" value="fixed"> 指定时刻(UTC,时钟从该时刻继续走)</label>
-        <input type="datetime-local" name="fixed_time" step="1" aria-label="指定时刻(UTC)">
+        <legend data-i18n="settings.time">时间</legend>
+        <label class="check"><input type="radio" name="time_mode" value="live"> <span data-i18n="settings.live">实时</span></label>
+        <label class="check"><input type="radio" name="time_mode" value="fixed"> <span data-i18n="settings.fixed">指定时刻(UTC,时钟从该时刻继续走)</span></label>
+        <input type="datetime-local" name="fixed_time" step="1" data-i18n-aria-label="settings.fixedLabel" aria-label="指定时刻(UTC)">
       </fieldset>
-      <label>时刻策略(该时刻用哪组根数)
+      <label><span data-i18n="settings.policy">时刻策略(该时刻用哪组根数)</span>
         <select name="time_policy"></select>
       </label>
-      <label>采集策略
+      <label><span data-i18n="settings.collect">采集策略</span>
         <select name="collect_mode"></select>
       </label>
       <p class="muted small" id="collect-hint"></p>
       <p class="hint" id="settings-error" role="alert"></p>
       <div class="buttons">
-        <button type="submit" class="primary">应用设置</button>
+        <button type="submit" class="primary" data-i18n="settings.apply">应用设置</button>
       </div>
     </form>
     <p class="small provenance" id="provenance"></p>
@@ -51,86 +52,86 @@
   </section>
 
   <section>
-    <h2>过滤</h2>
+    <h2 data-i18n="filter.title">过滤</h2>
     <form id="filter-form" autocomplete="off">
       <div class="row">
-        <label>高度下限 km<input type="number" name="alt_min_km" step="10" min="0" required></label>
-        <label>高度上限 km<input type="number" name="alt_max_km" step="10" min="0" required></label>
+        <label><span data-i18n="filter.altMin">高度下限 km</span><input type="number" name="alt_min_km" step="10" min="0" required></label>
+        <label><span data-i18n="filter.altMax">高度上限 km</span><input type="number" name="alt_max_km" step="10" min="0" required></label>
       </div>
-      <label>高度判据
+      <label><span data-i18n="filter.altMode">高度判据</span>
         <select name="altitude_mode">
-          <option value="orbit-overlap">轨道与范围有交集</option>
-          <option value="orbit-within">轨道完全在范围内</option>
-          <option value="instantaneous">此刻高度在范围内</option>
+          <option value="orbit-overlap" data-i18n="filter.mode.orbit-overlap">轨道与范围有交集</option>
+          <option value="orbit-within" data-i18n="filter.mode.orbit-within">轨道完全在范围内</option>
+          <option value="instantaneous" data-i18n="filter.mode.instantaneous">此刻高度在范围内</option>
         </select>
       </label>
       <div class="row">
-        <label>最小尺寸 cm<input type="number" name="min_size_cm" step="1" min="0" required></label>
-        <label>根数龄期 ≤ 天<input type="number" name="max_epoch_age_days" step="1" min="0" placeholder="不限"></label>
+        <label><span data-i18n="filter.minSize">最小尺寸 cm</span><input type="number" name="min_size_cm" step="1" min="0" required></label>
+        <label><span data-i18n="filter.maxAge">根数龄期 ≤ 天</span><input type="number" name="max_epoch_age_days" step="1" min="0" data-i18n-placeholder="filter.noLimit" placeholder="不限"></label>
       </div>
-      <label class="check"><input type="checkbox" name="unknown_include"> 包含尺寸无法判定的物体</label>
+      <label class="check"><input type="checkbox" name="unknown_include"> <span data-i18n="filter.unknownInclude">包含尺寸无法判定的物体</span></label>
       <fieldset>
-        <legend>类型</legend>
+        <legend data-i18n="filter.types">类型</legend>
         <div id="type-checks" class="type-checks"></div>
       </fieldset>
-      <label>国家/所有者(逗号分隔,空为全部)<input type="text" name="countries" placeholder="如 US, PRC, CIS"></label>
+      <label><span data-i18n="filter.countries">国家/所有者(逗号分隔,空为全部)</span><input type="text" name="countries" data-i18n-placeholder="filter.countriesPlaceholder" placeholder="如 US, PRC, CIS"></label>
       <p class="hint" id="filter-error" role="alert"></p>
       <div class="buttons">
-        <button type="submit" class="primary">应用</button>
-        <button type="button" id="btn-reset">恢复默认</button>
+        <button type="submit" class="primary" data-i18n="filter.apply">应用</button>
+        <button type="button" id="btn-reset" data-i18n="filter.reset">恢复默认</button>
       </div>
     </form>
   </section>
 
   <section>
-    <h2>搜索</h2>
-    <input type="search" id="search" placeholder="名称 / NORAD 编号 / 国际编号" aria-label="搜索物体">
+    <h2 data-i18n="search.title">搜索</h2>
+    <input type="search" id="search" data-i18n-placeholder="search.placeholder" placeholder="名称 / NORAD 编号 / 国际编号" data-i18n-aria-label="search.label" aria-label="搜索物体">
     <ul id="search-results" class="results"></ul>
   </section>
 
   <section>
-    <h2>统计 <span class="muted" id="stats-total"></span></h2>
+    <h2><span data-i18n="stats.title">统计</span> <span class="muted" id="stats-total"></span></h2>
     <div id="type-bars" class="type-bars"></div>
-    <h3>平均高度分布(每 <span id="hist-bin">50</span> km)</h3>
+    <h3 id="hist-title">平均高度分布(每 50 km)</h3>
     <div id="histogram" class="histogram"></div>
     <details>
-      <summary>数据表</summary>
-      <table id="hist-table" class="table"><thead><tr><th>高度区间 km</th><th>数量</th></tr></thead><tbody></tbody></table>
+      <summary data-i18n="stats.table">数据表</summary>
+      <table id="hist-table" class="table"><thead><tr><th data-i18n="stats.colRange">高度区间 km</th><th data-i18n="stats.colCount">数量</th></tr></thead><tbody></tbody></table>
     </details>
   </section>
 
   <section>
-    <h2>数据源</h2>
+    <h2 data-i18n="sources.title">数据源</h2>
     <ul id="sources" class="sources"></ul>
     <p class="muted small" id="refresh-info"></p>
     <details id="fetches-wrap" hidden>
-      <summary>最近的采集记录</summary>
-      <table id="fetches" class="table"><thead><tr><th>获取时间 (UTC)</th><th>资源</th><th>方式</th></tr></thead><tbody></tbody></table>
+      <summary data-i18n="sources.recentFetches">最近的采集记录</summary>
+      <table id="fetches" class="table"><thead><tr><th data-i18n="sources.colTime">获取时间 (UTC)</th><th data-i18n="sources.colResource">资源</th><th data-i18n="sources.colHow">方式</th></tr></thead><tbody></tbody></table>
     </details>
   </section>
-  <p class="muted small footnote">尺寸为雷达截面积(RCS)推算的等效直径估算值;公开编目在近地轨道的门限约 10 cm。</p>
+  <p class="muted small footnote" data-i18n="footnote">尺寸为雷达截面积(RCS)推算的等效直径估算值;公开编目在近地轨道的门限约 10 cm。</p>
 </aside>
 
-<aside id="right" class="panel" hidden aria-label="物体详情">
+<aside id="right" class="panel" hidden data-i18n-aria-label="details.panel" aria-label="物体详情">
   <div class="panel-head">
     <h2 id="d-name">--</h2>
-    <button type="button" id="btn-close" aria-label="关闭详情">✕</button>
+    <button type="button" id="btn-close" data-i18n-aria-label="details.close" aria-label="关闭详情">✕</button>
   </div>
   <div class="type-tag" id="d-type"></div>
   <dl class="kv" id="d-live">
-    <dt>纬度 / 经度</dt><dd id="d-latlon">--</dd>
-    <dt>高度</dt><dd id="d-alt">--</dd>
-    <dt>速度</dt><dd id="d-speed">--</dd>
+    <dt data-i18n="details.latlon">纬度 / 经度</dt><dd id="d-latlon">--</dd>
+    <dt data-i18n="details.alt">高度</dt><dd id="d-alt">--</dd>
+    <dt data-i18n="details.speed">速度</dt><dd id="d-speed">--</dd>
   </dl>
   <dl class="kv" id="d-static"></dl>
   <div class="buttons">
-    <button type="button" id="btn-fly">飞到物体</button>
-    <button type="button" id="btn-track" aria-pressed="true">轨道线</button>
+    <button type="button" id="btn-fly" data-i18n="details.flyTo">飞到物体</button>
+    <button type="button" id="btn-track" aria-pressed="true" data-i18n="details.track">轨道线</button>
   </div>
 </aside>
 
 <div id="tooltip" role="tooltip" hidden></div>
-<div id="loading">正在加载 3D 引擎…</div>
+<div id="loading" data-i18n="app.loading">正在加载 3D 引擎…</div>
 
 <script type="module" src="js/main.js"></script>
 </body>

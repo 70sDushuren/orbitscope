@@ -1,0 +1,85 @@
+name: Prepare release
+
+# 每次发布的入口(Actions → Prepare release → Run workflow,输入版本号):
+#   1. 用 Claude API 自动翻译界面中新增或改动的文字(英语、繁體中文(香港));
+#   2. 更新版本号与 CHANGELOG,提交并打标签;
+#   3. 调用 Release 工作流构建并发布三平台二进制。
+# 需要在仓库 Settings → Secrets and variables → Actions 中添加 ANTHROPIC_API_KEY
+# (译文已是最新时不会调用 API,也就不需要该密钥)。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号(不带 v),例如 0.2.2
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Validate version
+        id: tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::版本号格式应为 X.Y.Z"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::标签 v$VERSION 已存在"; exit 1
+          fi
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Translate new or changed UI strings
+        working-directory: scripts/i18n
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          npm ci --no-audit --no-fund
+          node i18n.mjs translate
+          node i18n.mjs check
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bump version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" Cargo.toml
+          cargo update --workspace --offline || cargo update --workspace
+          if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            today=$(date -u +%Y-%m-%d)
+            awk -v v="$VERSION" -v d="$today" '
+              !done && /^## \[/ { print "## [" v "] - " d "\n\n### 变更\n- 同步多语言界面翻译。\n"; done=1 }
+              { print }' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          fi
+          git diff --stat
+      - name: Commit and tag
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "release: $TAG (version bump, translations synced)"
+          git tag "$TAG"
+          git push origin HEAD:main "$TAG"
+
+  release:
+    needs: prepare
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: write

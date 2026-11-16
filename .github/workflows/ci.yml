@@ -25,7 +25,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - name: Check frontend JavaScript syntax
-        run: for f in web/js/*.js scripts/*.js; do node --check "$f"; done
+        run: for f in web/js/*.js scripts/*.js scripts/i18n/*.mjs; do node --check "$f"; done
+      - name: Check translations (warning only; releases require them to be current)
+        run: node scripts/i18n/i18n.mjs check --warn
 
   msrv:
     name: MSRV (1.88)

@@ -1,10 +1,12 @@
 // 过滤条件:表单 ⇄ Filter JSON(WS 订阅用)⇄ REST 查询串。
+import { t } from './i18n.js';
+
 
 export const TYPES = [
-  { key: 'PAYLOAD', param: 'payload', label: '载荷', color: 'var(--type-payload)' },
-  { key: 'ROCKET BODY', param: 'rocket-body', label: '火箭体', color: 'var(--type-rocket)' },
-  { key: 'DEBRIS', param: 'debris', label: '碎片', color: 'var(--type-debris)' },
-  { key: 'UNKNOWN', param: 'unknown', label: '未知', color: 'var(--type-unknown)' },
+  { key: 'PAYLOAD', param: 'payload', color: 'var(--type-payload)', get label() { return t('type.PAYLOAD'); } },
+  { key: 'ROCKET BODY', param: 'rocket-body', color: 'var(--type-rocket)', get label() { return t('type.ROCKET BODY'); } },
+  { key: 'DEBRIS', param: 'debris', color: 'var(--type-debris)', get label() { return t('type.DEBRIS'); } },
+  { key: 'UNKNOWN', param: 'unknown', color: 'var(--type-unknown)', get label() { return t('type.UNKNOWN'); } },
 ];
 
 export function typeInfo(key) {
@@ -31,19 +33,19 @@ export function fillForm(form, f) {
 export function readForm(form) {
   const num = (name, label) => {
     const v = Number(form[name].value);
-    if (form[name].value === '' || !Number.isFinite(v)) throw new Error(`${label}必须是数字`);
+    if (form[name].value === '' || !Number.isFinite(v)) throw new Error(t('filter.err.number', { field: label }));
     return v;
   };
-  const alt_min_km = num('alt_min_km', '高度下限');
-  const alt_max_km = num('alt_max_km', '高度上限');
-  if (alt_min_km > alt_max_km) throw new Error('高度下限不能大于上限');
-  const min_size_cm = num('min_size_cm', '最小尺寸');
-  if (min_size_cm < 0) throw new Error('最小尺寸不能为负');
+  const alt_min_km = num('alt_min_km', t('filter.altMin'));
+  const alt_max_km = num('alt_max_km', t('filter.altMax'));
+  if (alt_min_km > alt_max_km) throw new Error(t('filter.err.altOrder'));
+  const min_size_cm = num('min_size_cm', t('filter.minSize'));
+  if (min_size_cm < 0) throw new Error(t('filter.err.sizeNegative'));
   const ageRaw = form.max_epoch_age_days.value.trim();
   const max_epoch_age_days = ageRaw === '' ? null : Number(ageRaw);
-  if (max_epoch_age_days !== null && !(max_epoch_age_days >= 0)) throw new Error('根数龄期必须是非负数');
+  if (max_epoch_age_days !== null && !(max_epoch_age_days >= 0)) throw new Error(t('filter.err.age'));
   const types = [...form.querySelectorAll('input[name="type"]:checked')].map((b) => b.value);
-  if (types.length === 0) throw new Error('至少选择一种类型');
+  if (types.length === 0) throw new Error(t('filter.err.noType'));
   return {
     alt_min_km,
     alt_max_km,

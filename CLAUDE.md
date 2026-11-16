@@ -20,7 +20,7 @@ crates/orbit-archive  历史归档:SQLite 根数历史库(只追加)、完整快
 crates/orbit-server   axum REST + WebSocket、调度器、Ticker
 crates/orbitscope     二进制 CLI(clap):fetch / list / show / export / stats / serve
 web/                  CesiumJS 前端(原生 ES Module,无构建步骤),rust-embed 打包进 orbit-server
-scripts/              browser-smoke.js(Playwright 冒烟测试)、gen_synthetic.py(合成数据)
+scripts/              browser-smoke.js(Playwright 冒烟测试)、gen_synthetic.py(合成数据)、i18n/(多语言检查与自动翻译)
 testdata/             离线测试样本
 config/               示例配置
 ```
@@ -68,6 +68,10 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
   绝不改写已有行;清理时每个物体最新一条永不删除。改动 `history.rs` 的选择 SQL 须保持 known-at 的可复现性(有测试)。
 - 测试与 CLI 端到端测试必须把 `[archive] dir` 指向临时目录(CLI 测试还隔离了 HOME / XDG_* 环境变量)。
 - 服务端设置(时刻策略、采集策略、时间)可运行期修改;非 serve 采集模式下服务端绝不联网。
+- 界面文字一律写进 `web/i18n/zh-CN.json`(源语言)并用 `t()` / `data-i18n*` 引用,不在 JS/HTML 中硬编码可见文字;
+  新增或修改源文字后,运行 `node scripts/i18n/i18n.mjs translate`(需 ANTHROPIC_API_KEY)或人工补译 `en.json`、`zh-HK.json`
+  后运行 `stamp`;`check` 必须通过才能发布。`zh-HK` 用香港粵語書面語。
+- 发布走 GitHub Actions 的 "Prepare release"(自动补译、改版本号、打标签、调用 Release)。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
 ## 数据源规则(必须遵守)
@@ -93,4 +97,5 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - [x] M4 orbit-server(REST + WebSocket OSF1 帧、随机分钟调度、token/本机写鉴权;15 个测试)
 - [x] M5 Web 前端(CesiumJS 3D 地球、过滤/搜索/统计/详情;浏览器冒烟测试 `scripts/browser-smoke.js`)
 - [x] M6 打包发布(Dockerfile 内置 Cesium、compose、systemd、CI / Release 工作流、使用手册、许可证;MSRV 1.88 已验证)
+- [x] v0.2.1 界面多语言(简体 / English / 繁體香港)与发布时自动翻译
 - [x] v0.2 历史归档与采集策略(orbit-archive;known-at / nearest-epoch / latest;serve / daemon / external;Web 设置面板)

@@ -321,6 +321,15 @@ Web 界面"设置"可切换本进程的采集模式(运行期生效;要持久化
 - **详情**:点击点或搜索结果 → `/objects/{id}` + `/objects/{id}/track`(一个周期,30 s 步长);
   地固系空间轨迹(实线)+ 星下点轨迹(虚线);实时经纬高由当前插值位置计算;不在订阅集合中的物体每 2 s 轮询。
 - **点大小**:3 px,按相机距离放大(1500 km 处 2 倍),选中时 8 px + 白色描边。
+- **多语言(v0.2.1)**:词典为 `web/i18n/<语言>.json`(扁平键值,`{name}` 占位符),简体中文 `zh-CN` 为源语言,
+  另有 `en`、`zh-HK`(香港繁體、粵語書面語)。`js/i18n.js` 提供 `t(key, params)`,HTML 用 `data-i18n` /
+  `data-i18n-placeholder` / `data-i18n-aria-label` 标记;语言按 localStorage → 浏览器语言(zh-HK/zh-TW/Hant → 繁體,
+  其他 zh → 简体,其余 → English)选择;切换时触发 `localechange` 事件,各面板重绘,无需刷新页面。
+  缺失的键依次回退到简体中文、键名。服务端返回的错误信息仍为简体中文。
+- **翻译维护**:`scripts/i18n/i18n.mjs` 记录每条译文对应的源文字指纹(`translation-state.json`)。
+  `check` 报告缺失 / 多余 / 占位符不一致 / 过期;`translate` 用 Claude API(`claude-opus-5-5`,结构化输出,
+  拒绝时服务端自动改用备用模型)只翻译缺失与过期条目;`stamp` 记录人工译文。
+  CI 中 `check --warn` 只警告;Release 工作流在构建前执行严格 `check`;"Prepare release" 工作流在发布前自动 `translate`。
 - **调试**:`window.orbitscope = { globe, stream, state }`;`state.lastFrameMs` / `lastCatalogMs` 为最近处理耗时。
 
 实测(2 万个合成物体、默认过滤后显示 14,182 个,无头 Chromium):处理 catalog 消息 ~17 ms,
@@ -383,6 +392,7 @@ tick_ms = 1000
 | 017 | `first_seen` 取资源的获取时间,而非写库时间 | 写库时间 | 从缓存重放不会伪造"新获取";`known-at` 结果可复现 |
 | 018 | 时刻策略是服务端级设置(Web 可切换),不按 WS 连接区分 | 每个连接各自的编目 | 保持"每 tick 全量外推一次"的共享计算(ADR-013) |
 | 019 | 采集策略三选一,非 `serve` 模式下 Web 服务只读本地数据 | 只允许 serve 采集 | 单机可常驻采集而不开 Web;SQLite WAL 支持多进程读写 |
+| 020 | 界面词典为运行时加载的 JSON,简体中文为源,发布时用 Claude API 按源文字指纹增量翻译 | 构建期生成 / 每次全量重译 / 人工维护 | 保持无构建步骤;只翻译变化部分,已审校的译文不被覆盖;译文过期时发布失败而不是静默发布旧译文 |
 | 007 | 尺寸 = RCS 等效直径估算,区间化 | 只用分档 / 忽略尺寸 | 公开数据只有 RCS;区间化可诚实表达不确定性 |
 | 008 | 默认数据源 CelesTrak,Space-Track 可选 | 只用 Space-Track | 免注册即可开箱运行;需要全量碎片时再配账号 |
 | 009 | SGP4 使用 sgp4 crate 默认(改进)模式 | AFSPC 兼容模式 | crate 推荐;与 AFSPC 参考向量差异仅数十米,远小于 SGP4 的 km 级误差 |

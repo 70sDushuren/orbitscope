@@ -1,6 +1,7 @@
 // OrbitScope 前端入口。
 
 import { api } from './api.js';
+import { LOCALES, initI18n, locale, setLocale, t } from './i18n.js';
 import { clearSaved, fillForm, loadSaved, readForm, save, toQuery } from './filter.js';
 import { Globe, loadCesium } from './globe.js';
 import {
@@ -35,7 +36,8 @@ const detailDom = {
 
 function setConn(connected) {
   $('st-conn-dot').className = `dot ${connected ? 'ok' : 'bad'}`;
-  $('st-conn').textContent = connected ? '已连接' : '重连中';
+  state.connected = connected;
+  $('st-conn').textContent = connected ? t('top.connected') : t('top.reconnecting');
 }
 
 function fail(msg) {
@@ -48,12 +50,13 @@ function fail(msg) {
 async function refreshStats() {
   try {
     const s = await api.stats(toQuery(state.filter), BIN_KM);
-    $('stats-total').textContent = `共 ${n(s.total)} 个`;
+    state.lastStats = s;
+    $('stats-total').textContent = t('stats.total', { n: n(s.total) });
     renderTypeBars($('type-bars'), s.by_type);
-    $('hist-bin').textContent = BIN_KM;
+    $('hist-title').textContent = t('stats.histTitle', { bin: BIN_KM });
     renderHistogram($('histogram'), $('hist-table'), s.altitude_histogram, BIN_KM, $('tooltip'));
   } catch (e) {
-    $('stats-total').textContent = `统计失败:${e.message}`;
+    $('stats-total').textContent = t('stats.failed', { error: e.message });
   }
 }
 
@@ -144,7 +147,34 @@ function updateLive(force = false) {
 let globe;
 let stream;
 
+/** 当前显示数量(用于语言切换后重绘)。 */
+function setShown(count) {
+  state.shownCount = count;
+  $('st-shown').textContent = t('top.count', { n: n(count) });
+}
+
+/** 语言选择器。 */
+function setupLanguage() {
+  const sel = $('lang-select');
+  sel.replaceChildren(
+    ...LOCALES.map((l) => {
+      const o = document.createElement('option');
+      o.value = l.id;
+      o.textContent = l.name;
+      return o;
+    }),
+  );
+  sel.value = locale();
+  sel.addEventListener('change', () => setLocale(sel.value));
+}
+
 async function main() {
+  try {
+    await initI18n();
+  } catch (e) {
+    console.warn('语言包加载失败,使用页面内置文字', e);
+  }
+  setupLanguage();
   renderTypeChecks($('type-checks'));
   const form = $('filter-form');
 
@@ -153,7 +183,7 @@ async function main() {
     cfg = await api.clientConfig();
     state.defaultFilter = await api.defaultFilter();
   } catch (e) {
-    fail(`无法连接服务:${e.message}`);
+    fail(t('app.cannotConnect', { error: e.message }));
     return;
   }
 
@@ -161,7 +191,7 @@ async function main() {
     const Cesium = await loadCesium(cfg.cesium_base_url);
     globe = new Globe(Cesium, $('globe'));
   } catch (e) {
-    fail(`${e.message}。如需离线使用,请在配置中设置 server.cesium_dir 指向本地 Cesium 目录。`);
+    fail(t('app.cesiumFailed', { url: e.cesiumUrl || cfg.cesium_base_url }));
     return;
   }
   $('loading').hidden = true;
@@ -174,7 +204,7 @@ async function main() {
       const t0 = performance.now();
       globe.setCatalog(msg.objects);
       state.lastCatalogMs = performance.now() - t0;
-      $('st-shown').textContent = `${n(msg.total)} 个`;
+      setShown(msg.total);
       if (state.selected) {
         const o = msg.objects.find((x) => x.id === state.selected.id);
         state.selected.i = o ? o.i : null;
@@ -187,7 +217,7 @@ async function main() {
       const t0 = performance.now();
       const shown = globe.applyFrame(f);
       state.lastFrameMs = performance.now() - t0;
-      if (state.filter && state.filter.altitude_mode === 'instantaneous') $('st-shown').textContent = `${n(shown)} 个`;
+      if (state.filter && state.filter.altitude_mode === 'instantaneous') setShown(shown);
     },
     error: (msg) => {
       $('filter-error').textContent = msg.message;
@@ -213,7 +243,7 @@ async function main() {
     state.settings = await api.settings();
     renderSettings(sform, state.settings);
   } catch (e) {
-    $('settings-error').textContent = `无法读取设置:${e.message}`;
+    $('settings-error').textContent = t('settings.loadFailed', { error: e.message });
   }
   sform.collect_mode.addEventListener('change', () => updateCollectHint(sform));
   for (const r of sform.querySelectorAll('input[name=time_mode]')) {
@@ -351,15 +381,37 @@ async function main() {
             return li;
           }),
         );
-        if (!r.items.length) results.innerHTML = '<li class="muted small">没有匹配的物体</li>';
+        if (!r.items.length) {
+          const li = document.createElement('li');
+          li.className = 'muted small';
+          li.textContent = t('search.none');
+          results.replaceChildren(li);
+        }
       } catch (e) {
         results.innerHTML = '';
         const li = document.createElement('li');
         li.className = 'muted small';
-        li.textContent = `搜索失败:${e.message}`;
+        li.textContent = t('search.failed', { error: e.message });
         results.append(li);
       }
     }, 300);
+  });
+
+  // 切换语言:重绘所有动态生成的文字
+  window.addEventListener('localechange', () => {
+    $('lang-select').value = locale();
+    renderTypeChecks($('type-checks'));
+    if (state.filter) fillForm(form, state.filter);
+    $('filter-error').textContent = '';
+    $('settings-error').textContent = '';
+    if (state.settings) renderSettings(sform, state.settings);
+    if (state.connected !== undefined) setConn(state.connected);
+    if (state.shownCount !== undefined) setShown(state.shownCount);
+    if (state.selected) renderDetails(detailDom, state.selected.data);
+    results.replaceChildren();
+    input.value = '';
+    refreshStats();
+    refreshStatus();
   });
 }
 

@@ -1,20 +1,39 @@
 name: Release
 
-# 推送 v* 标签时构建各平台二进制并发布到 GitHub Releases:
-#   git tag v0.1.0 && git push origin v0.1.0
+# 构建各平台二进制并发布到 GitHub Releases。两种触发方式:
+#   1. 推荐:Actions → "Prepare release" 手动运行,输入版本号;它会自动补译多语言、更新版本号、打标签并调用本工作流。
+#   2. 手动推送标签:git tag v0.2.1 && git push origin v0.2.1(要求多语言译文已是最新,否则发布失败)。
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: 要发布的标签,例如 v0.2.1
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  i18n:
+    name: Translations up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Check translations
+        run: node scripts/i18n/i18n.mjs check
+
   build:
     name: ${{ matrix.target }}
+    needs: i18n
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,6 +44,8 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -33,7 +54,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="orbitscope-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          name="orbitscope-${TAG}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           bin="target/${{ matrix.target }}/release/orbitscope"
           [ -f "$bin.exe" ] && bin="$bin.exe"
@@ -58,5 +79,6 @@ jobs:
         run: cd dist && sha256sum * > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: dist/*
           generate_release_notes: true

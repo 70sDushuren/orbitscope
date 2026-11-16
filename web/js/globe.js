@@ -11,7 +11,7 @@ export function loadCesium(baseUrl) {
     const s = document.createElement('script');
     s.src = `${baseUrl}Cesium.js`;
     s.onload = () => (window.Cesium ? resolve(window.Cesium) : reject(new Error('Cesium 未定义')));
-    s.onerror = () => reject(new Error(`无法加载 CesiumJS:${baseUrl}`));
+    s.onerror = () => reject(Object.assign(new Error(`CesiumJS load failed: ${baseUrl}`), { cesiumUrl: baseUrl }));
     document.head.appendChild(s);
   });
 }

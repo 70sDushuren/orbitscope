@@ -441,6 +441,10 @@ async fn web_frontend_and_client_config() {
     for (path, ctype) in [
         ("/js/main.js", "text/javascript"),
         ("/js/stream.js", "text/javascript"),
+        ("/js/i18n.js", "text/javascript"),
+        ("/i18n/zh-CN.json", "application/json"),
+        ("/i18n/en.json", "application/json"),
+        ("/i18n/zh-HK.json", "application/json"),
         ("/css/app.css", "text/css"),
     ] {
         let r = s.client.get(s.url(path)).send().await.unwrap();

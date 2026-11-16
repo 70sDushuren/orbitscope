@@ -1,0 +1,14 @@
+{
+  "name": "orbitscope-i18n",
+  "private": true,
+  "type": "module",
+  "description": "OrbitScope 前端多语言检查与自动翻译(发布时运行)",
+  "scripts": {
+    "check": "node i18n.mjs check",
+    "translate": "node i18n.mjs translate"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.9.0",
+    "zod": "^4.6.7"
+  }
+}

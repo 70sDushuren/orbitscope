@@ -1,9 +1,9 @@
 // 面板渲染:统计(类型条形 + 高度直方图)、数据源、物体详情。
 
 import { TYPES, typeInfo } from './filter.js';
+import { fmtDateTime, fmtNumber, t } from './i18n.js';
 
-const fmt = new Intl.NumberFormat('zh-CN');
-export const n = (v) => fmt.format(v);
+export const n = (v) => fmtNumber(v);
 
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
@@ -23,23 +23,23 @@ export function swatch(color) {
 /** 类型复选框(带颜色标识)。 */
 export function renderTypeChecks(container) {
   container.replaceChildren(
-    ...TYPES.map((t) =>
-      el('label', { class: 'check' }, el('input', { type: 'checkbox', name: 'type', value: t.key, checked: '' }), swatch(t.color), t.label),
+    ...TYPES.map((ty) =>
+      el('label', { class: 'check' }, el('input', { type: 'checkbox', name: 'type', value: ty.key, checked: '' }), swatch(ty.color), ty.label),
     ),
   );
 }
 
 /** 按类型的水平条形(颜色跟随类型,数值用文字色)。 */
 export function renderTypeBars(container, byType) {
-  const max = Math.max(1, ...TYPES.map((t) => byType[t.key] || 0));
+  const max = Math.max(1, ...TYPES.map((ty) => byType[ty.key] || 0));
   container.replaceChildren(
-    ...TYPES.map((t) => {
-      const v = byType[t.key] || 0;
+    ...TYPES.map((ty) => {
+      const v = byType[ty.key] || 0;
       return el(
         'div',
-        { class: 'tb-row', title: `${t.label}:${n(v)}` },
-        el('span', { class: 'tb-name' }, swatch(t.color), t.label),
-        el('div', { class: 'tb-track' }, el('div', { class: 'tb-fill', style: `width:${(v / max) * 100}%;background:${t.color}` })),
+        { class: 'tb-row', title: `${ty.label}:${n(v)}` },
+        el('span', { class: 'tb-name' }, swatch(ty.color), ty.label),
+        el('div', { class: 'tb-track' }, el('div', { class: v ? 'tb-fill' : 'tb-fill zero', style: `width:${(v / max) * 100}%;background:${ty.color}` })),
         el('span', { class: 'tb-val' }, n(v)),
       );
     }),
@@ -61,7 +61,7 @@ export function renderHistogram(container, table, hist, binKm, tooltip) {
     ...hist.map(([lo, c]) => el('tr', {}, el('td', {}, `${lo}–${lo + binKm}`), el('td', {}, n(c)))),
   );
   if (!hist.length) {
-    container.append(el('p', { class: 'muted small' }, '没有数据'));
+    container.append(el('p', { class: 'muted small' }, t('stats.noData')));
     return;
   }
   // 补齐空分箱,使横轴连续
@@ -74,7 +74,7 @@ export function renderHistogram(container, table, hist, binKm, tooltip) {
   const W = 290, H = 110, padB = 16, gap = 2;
   const max = Math.max(...bins.map((b) => b[1]), 1);
   const bw = Math.max((W - gap * (bins.length - 1)) / bins.length, 1);
-  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '平均高度分布直方图' });
+  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': t('stats.histAria') });
   bins.forEach(([lo, c], k) => {
     const h = c ? Math.max(((H - padB) * c) / max, 2) : 0;
     const x = k * (bw + gap);
@@ -91,7 +91,7 @@ export function renderHistogram(container, table, hist, binKm, tooltip) {
     // 命中区域比柱形大:整列
     const hit = svg('rect', { x, y: 0, width: bw + gap, height: H - padB, fill: 'transparent' });
     hit.addEventListener('mousemove', (ev) => {
-      tooltip.textContent = `${lo}–${lo + binKm} km:${n(c)}`;
+      tooltip.textContent = `${lo}–${lo + binKm} km: ${n(c)}`;
       tooltip.hidden = false;
       tooltip.style.left = `${ev.clientX + 12}px`;
       tooltip.style.top = `${ev.clientY + 12}px`;
@@ -101,9 +101,9 @@ export function renderHistogram(container, table, hist, binKm, tooltip) {
   });
   root.append(svg('line', { x1: 0, x2: W, y1: H - padB + 0.5, y2: H - padB + 0.5, class: 'baseline' }));
   const label = (x, text, anchor) => {
-    const t = svg('text', { x, y: H - 3, class: 'axis', 'text-anchor': anchor });
-    t.textContent = text;
-    root.append(t);
+    const txt = svg('text', { x, y: H - 3, class: 'axis', 'text-anchor': anchor });
+    txt.textContent = text;
+    root.append(txt);
   };
   label(0, `${lo0} km`, 'start');
   label(W, `${hiN + binKm} km`, 'end');
@@ -113,18 +113,17 @@ export function renderHistogram(container, table, hist, binKm, tooltip) {
 function ago(iso) {
   const s = (Date.now() - Date.parse(iso)) / 1000;
   if (!Number.isFinite(s)) return '';
-  if (s < 120) return `${Math.round(s)} 秒前`;
-  if (s < 7200) return `${Math.round(s / 60)} 分钟前`;
-  if (s < 172800) return `${(s / 3600).toFixed(1)} 小时前`;
-  return `${(s / 86400).toFixed(1)} 天前`;
+  if (s < 120) return t('ago.seconds', { n: Math.round(s) });
+  if (s < 7200) return t('ago.minutes', { n: Math.round(s / 60) });
+  if (s < 172800) return t('ago.hours', { n: (s / 3600).toFixed(1) });
+  return t('ago.days', { n: (s / 86400).toFixed(1) });
 }
 
-const ORIGIN = { network: '已下载', not_modified: '服务器确认未更新', cache: '缓存', stale_cache: '旧缓存(联网失败)' };
 
 /** 数据源状态列表(状态点 + 文字,不只依赖颜色)。 */
 export function renderSources(list, info, status) {
   if (!status.sources.length && status.settings && status.settings.collect_mode !== 'serve') {
-    list.replaceChildren(el('li', { class: 'muted' }, '本服务不联网采集,数据来自本地历史(见下方采集记录)。'));
+    list.replaceChildren(el('li', { class: 'muted' }, t('sources.passive')));
     info.textContent = '';
     return;
   }
@@ -134,16 +133,16 @@ export function renderSources(list, info, status) {
       const cls = !s.ok ? 'bad' : stale ? 'warn' : 'ok';
       const res = s.resources[0];
       const detail = !s.ok
-        ? `失败:${s.error}`
-        : `${n(s.records)} 条${res ? `,${ORIGIN[res.origin.kind] || res.origin.kind},${ago(res.fetched_at)}` : ''}`;
+        ? t('sources.failed', { error: s.error })
+        : [t('sources.records', { n: n(s.records) }), ...(res ? [t(`origin.${res.origin.kind}`), ago(res.fetched_at)] : [])].join(' · ');
       return el('li', {}, el('span', { class: `dot ${cls}`, 'aria-hidden': 'true' }), el('strong', {}, s.label), el('span', { class: 'muted' }, detail));
     }),
   );
   const sch = status.schedule;
   info.textContent = sch.next_refresh
-    ? `下次检查更新:${new Date(sch.next_refresh).toLocaleString()}`
+    ? t('sources.nextRefresh', { time: fmtDateTime(sch.next_refresh) })
     : sch.next_reload
-      ? `下次从本地重新加载:${new Date(sch.next_reload).toLocaleString()}`
+      ? t('sources.nextReload', { time: fmtDateTime(sch.next_reload) })
       : '';
 }
 
@@ -152,29 +151,29 @@ function fmtNum(v, d) {
 }
 
 function sizeText(s) {
-  if (s.size_source === 'unknown') return '未知';
-  if (s.size_source === 'numeric_rcs') return `≈${fmtNum(s.size_min_m, 2)} m(数值 RCS)`;
-  if (s.size_min_m > 0 && s.size_max_m) return `${fmtNum(s.size_min_m, 2)}–${fmtNum(s.size_max_m, 2)} m(RCS 分档)`;
-  if (s.size_max_m) return `< ${fmtNum(s.size_max_m, 2)} m(RCS 分档)`;
-  return `> ${fmtNum(s.size_min_m, 2)} m(RCS 分档)`;
+  if (s.size_source === 'unknown') return t('size.unknown');
+  if (s.size_source === 'numeric_rcs') return t('size.numeric', { d: fmtNum(s.size_min_m, 2) });
+  if (s.size_min_m > 0 && s.size_max_m) return t('size.range', { min: fmtNum(s.size_min_m, 2), max: fmtNum(s.size_max_m, 2) });
+  if (s.size_max_m) return t('size.below', { max: fmtNum(s.size_max_m, 2) });
+  return t('size.above', { min: fmtNum(s.size_min_m, 2) });
 }
 
 /** 详情面板静态部分。 */
 export function renderDetails(dom, data) {
   const s = data.summary;
-  const t = typeInfo(s.object_type);
+  const ti = typeInfo(s.object_type);
   dom.name.textContent = s.name;
-  dom.type.replaceChildren(swatch(t.color), `${t.label} · NORAD ${s.norad_id}`);
+  dom.type.replaceChildren(swatch(ti.color), `${ti.label} · NORAD ${s.norad_id}`);
   const rows = [
-    ['国际编号', s.intl_designator || '--'],
-    ['国家/所有者', s.country || '--'],
-    ['近地点 / 远地点', `${fmtNum(s.perigee_km, 0)} / ${fmtNum(s.apogee_km, 0)} km`],
-    ['倾角', `${fmtNum(s.inclination_deg, 2)}°`],
-    ['周期', `${fmtNum(s.period_min, 1)} 分钟`],
-    ['估算尺寸', sizeText(s)],
-    ['根数历元', s.epoch.replace('T', ' ').replace('Z', '')],
-    ['根数龄期', `${fmtNum(s.epoch_age_days, 1)} 天`],
-    ['数据来源', s.source],
+    [t('details.intl'), s.intl_designator || '--'],
+    [t('details.country'), s.country || '--'],
+    [t('details.perigeeApogee'), `${fmtNum(s.perigee_km, 0)} / ${fmtNum(s.apogee_km, 0)} km`],
+    [t('details.inclination'), `${fmtNum(s.inclination_deg, 2)}°`],
+    [t('details.period'), t('details.periodValue', { n: fmtNum(s.period_min, 1) })],
+    [t('details.size'), sizeText(s)],
+    [t('details.epoch'), s.epoch.replace('T', ' ').replace('Z', '')],
+    [t('details.epochAge'), t('details.days', { n: fmtNum(s.epoch_age_days, 1) })],
+    [t('details.source'), s.source],
   ];
   dom.static.replaceChildren(...rows.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]));
 }

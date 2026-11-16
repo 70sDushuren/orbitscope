@@ -10,7 +10,8 @@ const OUT = process.argv[3] || '.';
 
 (async () => {
   const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
-  const page = await browser.newPage({ viewport: { width: 1400, height: 860 }, deviceScaleFactor: 1 });
+  // 固定为简体中文,便于对照截图;语言切换另有 SMOKE_LOCALE 控制
+  const page = await browser.newPage({ viewport: { width: 1400, height: 860 }, deviceScaleFactor: 1, locale: process.env.SMOKE_LOCALE || 'zh-CN' });
   const errors = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -21,13 +22,14 @@ const OUT = process.argv[3] || '.';
   await page.waitForFunction(() => window.orbitscope && window.orbitscope.state.lastFrameMs !== undefined, null, { timeout: 30000 });
   const info = await page.evaluate(() => ({
     shown: document.getElementById('st-shown').textContent,
-    conn: document.getElementById('st-conn').textContent,
+    conn: window.orbitscope.state.connected,
+    lang: document.documentElement.lang,
     stats: document.getElementById('stats-total').textContent,
     frameApplyMs: window.orbitscope.state.lastFrameMs,
     catalogMs: window.orbitscope.state.lastCatalogMs,
   }));
   console.log(JSON.stringify(info));
-  if (info.conn !== '已连接') fail('WebSocket 未连接');
+  if (info.conn !== true) fail('WebSocket 未连接');
   await page.screenshot({ path: `${OUT}/overview.png` });
 
   // 搜索第一个结果并打开详情
