@@ -7,7 +7,7 @@
 | 服务 | 内容 | 访问方式 | 备注 |
 |------|------|---------|------|
 | **Space-Track.org**(美国太空军 / 18th SDS) | 权威公开编目:GP(OMM/TLE)、SATCAT、衰减/再入、gp_history | 免费注册账号,REST 查询语言 `basicspacedata/query/class/...` | `RCS_SIZE` 自 2014 年起仅为分档:SMALL < 0.1 m²、MEDIUM 0.1–1 m²、LARGE > 1 m²。**官方规定(2026-11 核实)**:< 30 次/分且 < 300 次/时;GP 每小时 1 次,在非整点/半点的随机分钟发起,查询加 `/decay_date/null-val/epoch/%3Enow-10/`;SATCAT 每天 1 次(17:00 UTC 后);gp_history 每个对象终身 1 次;`RCSVALUE` 对普通账号为 0,2026-05-28 起单位改为米 |
-| **CelesTrak**(T.S. Kelso) | GP 数据(按分组/编号/名称查询)、SATCAT、SupGP(运营方提供的补充星历) | 无需账号:`/NORAD/elements/gp.php?{CATNR|INTDES|GROUP|NAME|SPECIAL}=..&FORMAT=json|tle|xml|csv|kvn` | JSON/OMM 支持 9 位编号,TLE 只支持 5 位;SATCAT 含数值 RCS(m²,可能为空,早期值不可靠);有使用政策,按 IP 统计、过度下载会被封(具体阈值仍待核实:开发云环境访问 celestrak.org 返回 500 / 连接重置) |
+| **CelesTrak**(T.S. Kelso) | GP 数据(按分组/编号/名称查询)、SATCAT、SupGP(运营方提供的补充星历) | 无需账号:`/NORAD/elements/gp.php?{CATNR|INTDES|GROUP|NAME|SPECIAL}=..&FORMAT=json|tle|xml|csv|kvn` | JSON/OMM 支持 9 位编号,TLE 只支持 5 位;SATCAT 含数值 RCS(m²,可能为空,早期值不可靠);有使用政策,按 IP 统计、过度下载会被封(具体阈值未公开;接口已在用户本地实测可用,开发云环境会被其拒绝) |
 | ESA DISCOS | 物体物理属性(尺寸、质量、形状) | 需申请账号 | 可作为未来"真实尺寸"数据源(P2) |
 | ESA / NASA ODPO 报告 | 碎片环境统计、尺寸估算模型(SEM) | 公开文档 | 尺寸估算算法依据 |
 | GCAT(J. McDowell) | 独立整理的全编目,含尺寸/质量估计 | 公开 TSV | 可作为尺寸补充数据源(P2,需注意许可) |

@@ -83,7 +83,7 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 
 - [x] M0 规划文档
 - [x] M1 orbit-core(44 个测试;基准:3 万物体单线程 ~30 ms,4 核并行 ~8 ms)
-- [x] M2 orbit-sources(26 个测试,全部基于 wiremock;CelesTrak 真实接口尚未在本地验证)
+- [x] M2 orbit-sources(26 个测试,全部基于 wiremock;CelesTrak 真实接口已在用户本地验证:19,575 个物体)
 - [x] M3 CLI(`fetch/list/show/export/stats/config`,TOML 配置;10 个端到端测试)
 - [x] M4 orbit-server(REST + WebSocket OSF1 帧、随机分钟调度、token/本机写鉴权;15 个测试)
 - [x] M5 Web 前端(CesiumJS 3D 地球、过滤/搜索/统计/详情;浏览器冒烟测试 `scripts/browser-smoke.js`)
