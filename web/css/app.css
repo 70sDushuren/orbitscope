@@ -69,7 +69,7 @@ h3 { font-size: 13px; margin: 12px 0 6px; font-weight: 500; color: var(--text-se
 
 label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 12px; }
 label input, label select { display: block; width: 100%; margin-top: 3px; }
-input[type=number], input[type=text], input[type=search], select {
+input[type=number], input[type=text], input[type=search], input[type=password], select {
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; color: var(--text-primary);
 }
 input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

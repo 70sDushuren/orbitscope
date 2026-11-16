@@ -162,6 +162,8 @@ fn status(label: &str, key: &str, origin: Origin, at: DateTime<Utc>) -> SourceSt
         }],
         notes: vec![],
         error: None,
+        error_code: None,
+        error_detail: None,
     }
 }
 

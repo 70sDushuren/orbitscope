@@ -96,7 +96,8 @@ reload_minutes = 5
 
 [server]
 # 监听地址。默认只允许本机访问;改为 0.0.0.0:8080 对外开放时,建议设置环境变量
-# ORBITSCOPE_API_TOKEN,写操作(修改默认过滤、手动刷新)需携带 Authorization: Bearer <token>
+# ORBITSCOPE_API_TOKEN,写操作(修改设置、默认过滤、手动刷新)需携带 Authorization: Bearer <token>。
+# 放在反向代理之后时必须设置:未设置 token 时,经代理转发的写请求一律拒绝
 bind = "127.0.0.1:8080"
 # 位置推送周期(毫秒),最小 100
 tick_ms = 1000

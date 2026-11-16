@@ -2,6 +2,36 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循语义化版本。
 
+## [未发布]
+
+### 安全
+- 未设置 API token 时,写接口不再接受经反向代理转发的请求(带有 `X-Forwarded-For`、`X-Real-IP`、`Forwarded`、
+  `X-Forwarded-Proto`、`X-Forwarded-Host` 或 `Via` 请求头)。此前同机反向代理转发的请求来源是本机地址,
+  会被当作本机请求放行。**经反向代理对外提供服务时必须设置 `ORBITSCOPE_API_TOKEN`。**
+- 从默认 CDN 加载 CesiumJS 时,入口脚本与样式表带子资源完整性校验(SRI),内容被替换时浏览器拒绝加载。
+- 升级 `rusqlite` 0.40 → 0.43(内置 SQLite 的 RUSTSEC-2026-0459)与 `time` 0.3.45 → 0.3.55(RUSTSEC-2026-0009)。
+
+### 变更
+- **"指定时刻"改为按连接生效**:Web 界面中切换到某个时刻只影响当前页面,其他访问者仍看到实时内容;
+  切换时间不再是写操作,不需要 API token。
+  - WebSocket 订阅消息增加 `time`(RFC3339 或 `"live"`);catalog 消息增加 `view`、`time_mode`、`time`。
+  - REST 的 `/status`、`/objects`、`/objects/{norad}`、`/objects/{norad}/track`、`/stats` 接受 `view=<编号>`,
+    与对应连接使用同一时钟与数据。
+  - **不兼容**:`PUT /api/v1/settings` 不再接受 `time`;`GET /api/v1/settings` 不再返回 `time_mode`、`server_time`、
+    `time_offset_secs`(`/status` 中仍有 `server_time`、`time_offset_secs`,并新增 `time_mode`、`view`)。
+- 最低 Rust 版本提高到 1.89(修复上述 SQLite 公告的 `rusqlite` 版本需要)。
+- 轨迹接口(`/objects/{norad}/track`)的外推放到阻塞线程池,不再占用异步工作线程。
+
+### 新增
+- Web 界面"时间与数据"面板可填写 API token(只保存在本浏览器中),用于 Docker、反向代理或其他电脑访问时修改设置;
+  服务端要求 token 时自动显示输入框。
+- 错误信息多语言:API 与 WebSocket 的错误增加稳定的 `code` 与 `params`,界面按所选语言显示;
+  `/status` 中失败的数据源增加 `error_code`、`error_detail`。`GET /api/v1/settings` 增加 `token_required`。
+- 英文说明 `README.en.md`。
+- 发布:增加 Linux arm64 二进制;多架构 Docker 镜像(amd64 / arm64)发布到 `ghcr.io/70sdushuren/orbitscope`。
+- CI:在真实浏览器中运行前端冒烟测试(`scripts/smoke.sh`,Playwright + 本地 CesiumJS);
+  依赖安全检查(每周及依赖变化时运行 `cargo audit` 与 `npm audit`);Dependabot 每周检查依赖更新。
+
 ## [0.2.1] - 2026-11-16
 
 ### 新增

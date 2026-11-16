@@ -1,14 +1,23 @@
 // Cesium 地球:点云渲染、两帧之间插值、拾取、轨道线。
 
 /** 动态加载 CesiumJS(基础 URL 由服务端 /api/v1/client-config 提供)。 */
-export function loadCesium(baseUrl) {
+export function loadCesium(baseUrl, integrity) {
   window.CESIUM_BASE_URL = baseUrl;
   const css = document.createElement('link');
   css.rel = 'stylesheet';
+  // 从 CDN 加载时校验内容(SRI):文件被篡改或替换时浏览器拒绝使用
+  if (integrity) {
+    css.integrity = integrity.css;
+    css.crossOrigin = 'anonymous';
+  }
   css.href = `${baseUrl}Widgets/widgets.css`;
   document.head.appendChild(css);
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
+    if (integrity) {
+      s.integrity = integrity.js;
+      s.crossOrigin = 'anonymous';
+    }
     s.src = `${baseUrl}Cesium.js`;
     s.onload = () => (window.Cesium ? resolve(window.Cesium) : reject(new Error('Cesium 未定义')));
     s.onerror = () => reject(Object.assign(new Error(`CesiumJS load failed: ${baseUrl}`), { cesiumUrl: baseUrl }));

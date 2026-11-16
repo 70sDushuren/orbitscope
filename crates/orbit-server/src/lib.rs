@@ -6,15 +6,17 @@
 //! - WebSocket 实时位置推送(`/api/v1/stream`,见 [`ws`] 与 [`frame`])。
 
 pub mod api;
+pub mod errors;
 pub mod frame;
 pub mod query;
 pub mod scheduler;
 pub mod state;
+pub mod view;
 pub mod web;
 pub mod ws;
 
 pub use state::{
-    AppState, DEFAULT_CESIUM_URL, PersistedSettings, RefreshKind, RuntimeSettings, ServerOptions,
+    AppState, DEFAULT_CESIUM_URL, PersistedSettings, RefreshKind, RuntimeSettings, Scope, ServerOptions, View,
 };
 
 use orbit_sources::SourceSet;
@@ -56,8 +58,14 @@ pub async fn serve_with_listener(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ServerError> {
     let local = listener.local_addr()?;
-    if !local.ip().is_loopback() && options.api_token.is_none() {
-        tracing::warn!(%local, "监听非本机地址且未设置 API token:写操作接口将拒绝非本机请求");
+    if options.api_token.is_none() {
+        if local.ip().is_loopback() {
+            tracing::info!(
+                "未设置 API token:写操作接口只接受本机直接发起的请求(经反向代理转发的请求会被拒绝)"
+            );
+        } else {
+            tracing::warn!(%local, "监听非本机地址且未设置 API token:写操作接口将拒绝非本机请求(Docker 端口映射、反向代理进来的请求也算非本机);需要时请设置 ORBITSCOPE_API_TOKEN");
+        }
     }
 
     let (refresh_tx, refresh_rx) = mpsc::channel(1);

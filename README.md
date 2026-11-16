@@ -1,5 +1,7 @@
 # OrbitScope
 
+[English](README.en.md) | 简体中文
+
 准实时近地轨道空间物体监视程序(Rust)。从公开数据源获取轨道根数,本地 SGP4 外推,
 按高度范围(默认 100–1000 km)与最小尺寸(默认 ≥ 10 cm)过滤,在浏览器 3D 地球、命令行和 API 中展示。
 
@@ -10,20 +12,25 @@
 - **历史归档**:每组根数只写一次并记录获取时间,永不覆盖;另存有容量上限的原始快照;
   指定任意时刻按"当时已获取的数据"复现展示;三种采集方式(Web 服务 / 常驻进程 / 系统定时任务)
 - **多语言界面**:简体中文 / English / 繁體中文(香港),发布时自动翻译新增文字
-- **展示**:CesiumJS 3D 地球(实时点云、轨道线、统计、时间回放)、命令行(表格 / JSON / CSV)、REST + WebSocket API
+- **展示**:CesiumJS 3D 地球(实时点云、轨道线、统计、时间回放——每位访问者各自选择时刻,互不影响)、命令行(表格 / JSON / CSV)、REST + WebSocket API
 
 ## 快速开始
 
 ```bash
-cargo build --release                             # 需要 Rust 1.88+
+cargo build --release                             # 需要 Rust 1.89+
 ./target/release/orbitscope serve                 # 浏览器打开 http://127.0.0.1:8080/
 ```
 
-或使用 Docker(镜像内置 CesiumJS,浏览器无需访问 CDN):
+或使用 Docker(镜像内置 CesiumJS,浏览器无需访问 CDN;支持 amd64 / arm64):
 
 ```bash
+docker run -d -p 127.0.0.1:8080:8080 -v orbitscope-data:/var/lib/orbitscope ghcr.io/70sdushuren/orbitscope:latest
+# 或从源码构建
 docker compose up -d
 ```
+
+预编译二进制(Linux x86_64 / arm64、macOS Apple Silicon、Windows x86_64)见
+[Releases](https://github.com/70sDushuren/orbitscope/releases)。Docker 镜像与 Linux arm64 二进制自 v0.2.1 之后的版本起提供。
 
 命令行示例:
 

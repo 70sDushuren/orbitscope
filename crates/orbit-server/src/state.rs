@@ -6,8 +6,9 @@ use orbit_archive::{Archive, CollectConfig, CollectMode, Provenance, TimePolicy}
 use orbit_core::{BuildReport, Catalog, Filter};
 use orbit_sources::SourceStatus;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -45,6 +46,14 @@ pub struct ServerOptions {
 
 /// 默认从 jsDelivr 加载的 CesiumJS 版本。
 pub const DEFAULT_CESIUM_URL: &str = "https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/";
+/// 默认版本 `Cesium.js` 的子资源完整性(SRI)校验值:浏览器只执行内容与之一致的脚本。
+/// 取自 npm 发布的 cesium-1.146.0.tgz(其 SHA-256 见 Dockerfile);升级 Cesium 版本时必须同步更新:
+/// `openssl dgst -sha384 -binary Build/Cesium/Cesium.js | openssl base64 -A`
+pub const DEFAULT_CESIUM_JS_INTEGRITY: &str =
+    "sha384-1lWK5deN/B+lLaUw4lk6xKp/L19ii/98SZLk6K8YthDskgvc+GbdixLzbCnSS2Wn";
+/// 默认版本 `Widgets/widgets.css` 的 SRI 校验值(同上)。
+pub const DEFAULT_CESIUM_CSS_INTEGRITY: &str =
+    "sha384-ghEeMdcWWzRv/BPeUcX835vcKDGrxvROXisl/Btpv3GeekBUXTSPVcFJpI1Tcrgp";
 
 impl Default for ServerOptions {
     fn default() -> Self {
@@ -108,12 +117,41 @@ pub fn catalog_signature(cat: &Catalog) -> u64 {
     h.finish()
 }
 
+/// 某个 WebSocket 连接自己的"指定时刻"视图:独立的时钟与按该时刻选取的编目。
+///
+/// 只属于创建它的连接,连接断开或回到实时后即移除;其他访问者不受影响。
+/// 该连接的 REST 请求用查询参数 `view=<id>` 指明使用这个视图。
+#[derive(Debug)]
+pub struct View {
+    pub id: String,
+    /// 视图时钟相对系统时间的偏移(时钟从指定时刻继续走)
+    pub offset: chrono::Duration,
+    pub catalog: ArcSwap<CatalogState>,
+}
+
+impl View {
+    /// 视图的"当前时间"。
+    pub fn now(&self) -> DateTime<Utc> {
+        Utc::now() + self.offset
+    }
+}
+
+/// 一次请求所用的编目与时钟:某个视图的,或服务端实时的。
+pub struct Scope {
+    pub catalog: Arc<CatalogState>,
+    pub now: DateTime<Utc>,
+    pub view: Option<Arc<View>>,
+}
+
+/// 视图编目的代数起点:与实时编目的代数(从 1 递增)错开,且低 32 位不为 0(帧中只带低 32 位)。
+const VIEW_GENERATION_START: u64 = 2_000_000_000;
+
 /// 运行期可在 Web 界面切换的设置。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RuntimeSettings {
     pub time_policy: TimePolicy,
     pub collect_mode: CollectMode,
-    /// 服务端时钟相对系统时间的偏移
+    /// 服务端时钟相对系统时间的偏移(来自 `--sim-time`,运行期不变;各连接的"指定时刻"见 [`View`])
     #[serde(skip)]
     pub time_offset: chrono::Duration,
 }
@@ -195,6 +233,10 @@ pub struct AppState {
     /// 最近一次获取时各数据源的状态
     pub source_status: Mutex<Vec<SourceStatus>>,
     pub ws_clients: AtomicUsize,
+    /// 各连接的"指定时刻"视图
+    pub views: Mutex<HashMap<String, Arc<View>>>,
+    view_generation: AtomicU64,
+    view_seq: AtomicU64,
     pub started_at: DateTime<Utc>,
     /// 置为 true 时所有后台任务与 WS 连接退出
     pub shutdown: watch::Sender<bool>,
@@ -219,14 +261,67 @@ impl AppState {
             schedule: Mutex::new(ScheduleInfo::default()),
             source_status: Mutex::new(Vec::new()),
             ws_clients: AtomicUsize::new(0),
+            views: Mutex::new(HashMap::new()),
+            view_generation: AtomicU64::new(VIEW_GENERATION_START),
+            view_seq: AtomicU64::new(0),
             started_at: Utc::now(),
             shutdown: watch::channel(false).0,
         }
     }
 
-    /// 服务端"当前时间"(系统时间 + 偏移)。
+    /// 服务端"当前时间"(系统时间 + 偏移)。各连接的"指定时刻"不影响它。
     pub fn now(&self) -> DateTime<Utc> {
         Utc::now() + self.settings().time_offset
+    }
+
+    /// 为视图编目分配一个新的代数。
+    pub fn next_view_generation(&self) -> u64 {
+        self.view_generation.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// 登记一个新视图(时钟从 `at` 起继续走)。
+    pub fn register_view(&self, at: DateTime<Utc>, catalog: Arc<CatalogState>) -> Arc<View> {
+        use std::hash::{BuildHasher, Hasher};
+        // 编号不可预测即可(不是凭据):序号 + 随机种子
+        let seq = self.view_seq.fetch_add(1, Ordering::SeqCst);
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(seq);
+        let view = Arc::new(View {
+            id: format!("{seq:x}-{:016x}", h.finish()),
+            offset: at - Utc::now(),
+            catalog: ArcSwap::new(catalog),
+        });
+        let mut g = self.views.lock().unwrap_or_else(|p| p.into_inner());
+        g.insert(view.id.clone(), view.clone());
+        view
+    }
+
+    pub fn remove_view(&self, id: &str) {
+        self.views.lock().unwrap_or_else(|p| p.into_inner()).remove(id);
+    }
+
+    /// 请求所用的编目与时钟。`view` 为 `None` 时是服务端实时的;指定了不存在的视图时返回 `None`。
+    pub fn scope(&self, view: Option<&str>) -> Option<Scope> {
+        match view.map(str::trim).filter(|v| !v.is_empty()) {
+            None => Some(Scope {
+                catalog: self.catalog.load_full(),
+                now: self.now(),
+                view: None,
+            }),
+            Some(id) => {
+                let v = self
+                    .views
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(id)
+                    .cloned()?;
+                Some(Scope {
+                    catalog: v.catalog.load_full(),
+                    now: v.now(),
+                    view: Some(v),
+                })
+            }
+        }
     }
 
     pub fn settings(&self) -> RuntimeSettings {

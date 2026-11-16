@@ -1,7 +1,7 @@
 // 面板渲染:统计(类型条形 + 高度直方图)、数据源、物体详情。
 
 import { TYPES, typeInfo } from './filter.js';
-import { fmtDateTime, fmtNumber, t } from './i18n.js';
+import { errText, fmtDateTime, fmtNumber, t } from './i18n.js';
 
 export const n = (v) => fmtNumber(v);
 
@@ -133,7 +133,7 @@ export function renderSources(list, info, status) {
       const cls = !s.ok ? 'bad' : stale ? 'warn' : 'ok';
       const res = s.resources[0];
       const detail = !s.ok
-        ? t('sources.failed', { error: s.error })
+        ? t('sources.failed', { error: errText({ code: s.error_code ? `source_${s.error_code}` : null, params: { detail: s.error_detail }, message: s.error }) })
         : [t('sources.records', { n: n(s.records) }), ...(res ? [t(`origin.${res.origin.kind}`), ago(res.fetched_at)] : [])].join(' · ');
       return el('li', {}, el('span', { class: `dot ${cls}`, 'aria-hidden': 'true' }), el('strong', {}, s.label), el('span', { class: 'muted' }, detail));
     }),

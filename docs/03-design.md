@@ -260,12 +260,21 @@ Web 界面"设置"可切换本进程的采集模式(运行期生效;要持久化
   生成 `PositionFrame`(ECEF f32 + 高度,失败为 NaN),放入 `watch` 通道。计算量与客户端数量无关(ADR-013)。
 - **WS 连接任务**:每连接一个 task,从 `watch` 取最新帧、按自己的下标集合与瞬时高度条件编码发送;
   慢客户端自然丢帧(只看到最新帧)。连接数上限 `max_ws_clients`(默认 64),超出返回 503。
-- **时钟**:服务端"当前时间" = 系统时间 + `time_offset`;`--sim-time` 用于回放旧数据或演示。
+- **时钟**:服务端"当前时间" = 系统时间 + `time_offset`;`--sim-time` 用于回放旧数据或演示,运行期不变。
+- **指定时刻视图(按连接,ADR-021)**:WS 连接在订阅消息中给出 `time` 后,服务端为该连接建立一个**视图**:
+  独立的时钟(从该时刻继续走)+ 按该时刻从历史库选取的编目(时刻策略取当前服务端设置;没有历史库时内容同实时编目)。
+  该连接的位置帧由连接自己的任务按视图时钟外推(`spawn_blocking`),不使用共享 Ticker 的帧,也不订阅它
+  (没有实时订阅者时共享 Ticker 不计算)。视图编目在实时编目变化时与每隔 `reload_minutes` 重新选取,
+  内容不变则沿用原代数。视图登记在 `AppState.views`,编号随 catalog 消息下发;REST 请求带 `view=<编号>`
+  即使用同一时钟与编目。连接断开或回到实时后视图立即移除。视图编目的代数从 2,000,000,000 起,与实时编目的代数错开。
 
 ### 5.2 REST API(前缀 `/api/v1`)
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/status` | 版本、服务端时间、编目代数与数量、构建报告、数据源状态、刷新计划、WS 客户端数 |
+| GET | `/status` | 版本、服务端时间、编目代数与数量、构建报告、数据源状态、刷新计划、WS 客户端数、`time_mode`(live / fixed)、`view` |
+| GET | `/settings` | 时刻策略、采集策略、可选项、`history_enabled`、`persisted`、`token_required` |
+| PUT | `/settings` | 修改时刻策略 / 采集策略(写操作):`{"time_policy": "...", "collect_mode": "..."}` |
+| GET | `/client-config` | 前端配置:版本、Cesium 地址与完整性校验值、tick |
 | GET | `/filters/default` | 服务器默认过滤条件 |
 | PUT | `/filters/default` | 局部 JSON 合并到默认过滤(写操作) |
 | GET | `/objects` | 列表:过滤参数 + `at`、`page`、`per_page`(≤ 5000)、`sort`(id/name/alt/perigee/apogee/inc/age/size)、`desc` |
@@ -277,25 +286,43 @@ Web 界面"设置"可切换本进程的采集模式(运行期生效;要持久化
 
 过滤查询参数:`alt_min`、`alt_max`、`alt_mode`(orbit-overlap / orbit-within / instantaneous)、`min_size_cm`、
 `unknown_size`、`types`(逗号分隔:payload, rocket-body, debris, unknown)、`countries`、`inc_min`、`inc_max`、`q`、
-`max_age_days`、`any_age`;未给出的项取服务端默认过滤。错误统一返回 `{"error": "..."}`(400 / 401 / 403 / 404 / 503)。
+`max_age_days`、`any_age`;未给出的项取服务端默认过滤。
+
+`/status`、`/objects`、`/objects/{norad}`、`/objects/{norad}/track`、`/stats` 接受 `view=<编号>`:使用某个 WS 连接的
+指定时刻视图(时钟与编目);不带时使用服务端实时的。视图已不存在时返回 404(`code: view_gone`)。
+
+**错误格式**(ADR-022):`{"error": "中文说明", "code": "稳定的代码", "params": {...}}`(400 / 401 / 403 / 404 / 503)。
+`code` 与 `params` 供界面显示所选语言的说明(词典键 `err.<code>`,`params` 填入占位符);不认识的代码回退到 `error`。
+代码包括:`token_required`、`local_only`、`view_gone`、`object_not_found`、`ws_limit`、`unknown_type`、`unknown_sort`、
+`unknown_policy`、`unknown_collect_mode`、`bad_time`、`track_range`、`track_step`、`invalid_filter`、`filter_not_object`、
+`filter_alt_nan` / `filter_alt_order` / `filter_min_size` / `filter_inc_order` / `filter_epoch_age`(`orbit_core::FilterIssue`)、
+`invalid_argument`、`time_out_of_range`、`propagation`、`bad_message`、`bad_rate`、`internal`。
+`/status` 中失败的数据源带 `error_code`(`http`、`status`、`login`、`missing_credentials`、`cache`、`file`、`parse`、
+`no_cache`、`config`)与 `error_detail`,界面用词典键 `err.source_<code>` 显示。
 
 **写操作鉴权**(ADR-014):设置环境变量 `ORBITSCOPE_API_TOKEN`(≥ 16 字符)时要求 `Authorization: Bearer <token>`;
-未设置时只接受来自本机回环地址的写请求。读接口不鉴权。默认只监听 `127.0.0.1`。
+未设置时只接受本机直接发起的写请求:连接来源为本机回环地址,且请求不带反向代理的转发头
+(`Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、`X-Forwarded-Proto`、`X-Real-IP`、`Via`)——同机反向代理转发的请求
+来源也是回环地址,不能当作本机请求。鉴权失败的响应带 `code`:`token_required`(401)或 `local_only`(403);
+`GET /api/v1/settings` 的 `token_required` 说明是否配置了 token,前端据此显示 token 输入框(token 保存在浏览器 localStorage)。
+读接口不鉴权。默认只监听 `127.0.0.1`。
 
 ### 5.3 WebSocket 协议(`/api/v1/stream`)
 - 客户端 → 服务端(JSON 文本):
-  - `{"type":"subscribe","filter":{...局部过滤...},"rate_hz":1}`(可随时重发更换条件;`rate_hz` 范围 0.05–10,不超过 tick)
+  - `{"type":"subscribe","filter":{...局部过滤...},"rate_hz":1,"time":...}`(可随时重发更换条件;`rate_hz` 范围 0.05–10,不超过 tick)。
+    `time` 只对本连接生效:RFC3339 时刻 = 从该时刻起回放(时钟继续走),`"live"` = 回到实时,省略 = 保持本连接当前的时间模式
   - `{"type":"ping"}`
 - 服务端 → 客户端:
   - `{"type":"hello","version","tick_ms","generation","frame_format":"OSF1"}`:连接后立即发送
-  - `{"type":"catalog","generation","total","filter","rate_hz","objects":[{i,id,name,type,country,perigee_km,apogee_km,inc_deg,size_m}]}`:
-    订阅时与编目更新时发送;`i` 为位置帧中使用的编目下标
+  - `{"type":"catalog","generation","total","filter","rate_hz","view","time_mode","time","objects":[{i,id,name,type,country,perigee_km,apogee_km,inc_deg,size_m}]}`:
+    订阅时与编目更新时发送;`i` 为位置帧中使用的编目下标;`view` 为本连接指定时刻视图的编号(实时为 null),
+    `time_mode` 为 `live` / `fixed`,`time` 为本连接的当前时间
   - 二进制位置帧(小端):
     ```
     "OSF1" | u32 版本(1) | u32 编目代数 | f64 Unix 秒 | u32 N | N × { u32 下标 ; f32 x_km ; f32 y_km ; f32 z_km }  // ECEF
     ```
     头部 24 字节,每物体 16 字节;帧代数与订阅代数不一致时不发送(等待新的 catalog 消息)。
-  - `{"type":"error","message"}`、`{"type":"pong"}`
+  - `{"type":"error","message","code","params"}`(代码同 REST 错误)、`{"type":"pong"}`
 - 前端在两帧之间用线性插值或速度外推获得平滑动画。
 
 ## 6. 前端设计(web/)
@@ -308,13 +335,18 @@ Web 界面"设置"可切换本进程的采集模式(运行期生效;要持久化
 | `index.html` / `css/app.css` | 布局:顶部状态栏、左侧过滤/搜索/统计/数据源面板、右侧详情面板;深色界面;≤ 720 px 时面板变为底部抽屉且互斥 |
 | `js/main.js` | 启动:读 `/api/v1/client-config` 与默认过滤 → 加载 Cesium → 连接 WS → 订阅;交互绑定 |
 | `js/globe.js` | Cesium Viewer(NaturalEarthII 离线影像,不用 Cesium ion)、`PointPrimitiveCollection` 点云、两帧之间线性插值(显示滞后一帧)、拾取、轨道线 |
-| `js/stream.js` | WS 连接、指数退避重连、断线后自动重新订阅、OSF1 帧解码 |
+| `js/stream.js` | WS 连接、指数退避重连、断线后自动重新订阅(带上本页面的时间)、OSF1 帧解码 |
 | `js/filter.js` | 表单 ⇄ Filter JSON(WS)⇄ REST 查询串;过滤条件存 localStorage |
 | `js/panels.js` | 类型条形、平均高度直方图(SVG,悬停提示 + 数据表)、数据源状态、详情 |
-| `js/api.js` | REST 封装 |
+| `js/api.js` | REST 封装:自动带上本页面的 `view`、写请求带上 API token(保存在 localStorage) |
+| `js/settings.js` | "时间与数据"面板:本页面的时间(实时 / 指定时刻)、时刻策略、采集策略、数据依据 |
 
 - **CesiumJS 来源**:默认从 jsDelivr 加载固定版本 1.146.0(`server.cesium_url`);
   设置 `server.cesium_dir` 指向本地 `Build/Cesium` 目录时由服务端以 `/cesium/` 提供,前端完全离线。
+  从默认 CDN 地址加载时,`Cesium.js` 与 `Widgets/widgets.css` 带子资源完整性校验(SRI,sha384;校验值为
+  `orbit-server/src/state.rs` 中的常量,由 `/client-config` 的 `cesium_integrity` 下发):内容与发布包不一致时浏览器拒绝加载(ADR-023)。
+  Cesium 运行时自行加载的 Worker 与资源文件不在 SRI 覆盖范围内;需要完全可控时使用 `cesium_dir`(Docker 镜像即如此)。
+  自定义 `cesium_url` 时不做校验。
 - **颜色**:载荷 / 火箭体 / 碎片 使用分类调色板前 3 槽(深色 `#3987e5` / `#d95926` / `#199e70`),
   未知为中性灰;已用 dataviz 校验脚本按"所有配对"(散点场景)验证色觉障碍区分度与对比度。
   颜色同时出现在复选框、统计条形与地球点云上,文字始终使用文本色。
@@ -325,7 +357,8 @@ Web 界面"设置"可切换本进程的采集模式(运行期生效;要持久化
   另有 `en`、`zh-HK`(香港繁體、粵語書面語)。`js/i18n.js` 提供 `t(key, params)`,HTML 用 `data-i18n` /
   `data-i18n-placeholder` / `data-i18n-aria-label` 标记;语言按 localStorage → 浏览器语言(zh-HK/zh-TW/Hant → 繁體,
   其他 zh → 简体,其余 → English)选择;切换时触发 `localechange` 事件,各面板重绘,无需刷新页面。
-  缺失的键依次回退到简体中文、键名。服务端返回的错误信息仍为简体中文。
+  缺失的键依次回退到简体中文、键名。服务端的错误带代码与参数,界面用 `errText()` 按所选语言显示(见 5.2 错误格式);
+  错误中的具体内容(`detail`:地址、路径、底层库的报错)保持原样。
 - **翻译维护**:`scripts/i18n/i18n.mjs` 记录每条译文对应的源文字指纹(`translation-state.json`)。
   `check` 报告缺失 / 多余 / 占位符不一致 / 过期;`translate` 用 Claude API(`claude-opus-5-5`,结构化输出,
   拒绝时服务端自动改用备用模型)只翻译缺失与过期条目;`stamp` 记录人工译文。
@@ -390,7 +423,10 @@ tick_ms = 1000
 | 015 | 前端不引入构建工具,CesiumJS 默认走 CDN、可配置本地目录 | npm + 打包器;把 Cesium(23 MB)编进二进制 | 保持单一 Rust 工具链;二进制保持小巧;离线场景用 `cesium_dir` 满足 |
 | 016 | 历史以"根数"为单位去重存 SQLite,另存有上限的原始快照 | 只存完整快照 / 只存数据库 | 根数去重后每天只增量存储;快照满足原样审计,且有容量上限 |
 | 017 | `first_seen` 取资源的获取时间,而非写库时间 | 写库时间 | 从缓存重放不会伪造"新获取";`known-at` 结果可复现 |
-| 018 | 时刻策略是服务端级设置(Web 可切换),不按 WS 连接区分 | 每个连接各自的编目 | 保持"每 tick 全量外推一次"的共享计算(ADR-013) |
+| 018 | 时刻策略是服务端级设置(Web 可切换),不按 WS 连接区分 | 每个连接各自的时刻策略 | 实时连接保持"每 tick 全量外推一次"的共享计算(ADR-013);指定时刻的连接见 ADR-021 |
+| 021 | "指定时刻"按 WS 连接生效:连接自己的视图(时钟 + 编目),REST 用 `view` 参数跟随 | 服务端级的全局时刻(v0.2 的做法) | 多人访问时一个人回放不应改变所有人看到的内容;切换时间不再是写操作,无需 token。代价是每个回放连接各自外推(3 万物体约 8 ms/帧),连接数受 `max_ws_clients` 限制 |
+| 022 | 错误带稳定的 `code` 与 `params`,界面按代码显示所选语言的说明 | 服务端按 `Accept-Language` 返回译文 | 译文集中在前端词典,沿用同一套翻译流程;API 使用者也可按代码处理 |
+| 023 | 默认 CDN 的 Cesium 入口文件带 SRI 校验 | 不校验;把 Cesium 打进发布包 | 防止 CDN 内容被替换后在页面中执行;不增大二进制 |
 | 019 | 采集策略三选一,非 `serve` 模式下 Web 服务只读本地数据 | 只允许 serve 采集 | 单机可常驻采集而不开 Web;SQLite WAL 支持多进程读写 |
 | 020 | 界面词典为运行时加载的 JSON,简体中文为源,发布时用 Claude API 按源文字指纹增量翻译 | 构建期生成 / 每次全量重译 / 人工维护 | 保持无构建步骤;只翻译变化部分,已审校的译文不被覆盖;译文过期时发布失败而不是静默发布旧译文 |
 | 007 | 尺寸 = RCS 等效直径估算,区间化 | 只用分档 / 忽略尺寸 | 公开数据只有 RCS;区间化可诚实表达不确定性 |
@@ -400,4 +436,4 @@ tick_ms = 1000
 | 011 | 数据源用枚举 `Source` 而非 `dyn Trait` | `async_trait` + trait 对象 | 数据源种类固定且少;避免额外依赖与装箱 future |
 | 012 | 刷新间隔设硬下限,且以磁盘缓存时间为准 | 只在内存中记录上次抓取时间 | 程序反复重启也不会违反数据源频率规定 |
 | 013 | 每 tick 对全部物体外推一次,各 WS 连接只做子集编码 | 按订阅条件的并集外推 / 每连接各自外推 | 3 万物体全量外推约 8 ms,实现最简单且计算量与客户端数无关;无订阅者时不计算 |
-| 014 | 写操作:有 token 时 Bearer 鉴权,无 token 时仅限本机 | 一律开放 / 强制 token | 本机单用户零配置可用,对外开放时有安全默认 |
+| 014 | 写操作:有 token 时 Bearer 鉴权,无 token 时仅限本机直接发起(带反向代理转发头的请求不算) | 一律开放 / 强制 token | 本机单用户零配置可用,对外开放时有安全默认;同机反向代理转发的请求来源也是回环地址,必须排除 |

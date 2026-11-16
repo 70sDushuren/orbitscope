@@ -5,11 +5,12 @@
 ## 1. 安装
 
 ### 1.1 预编译二进制
-在 GitHub Releases 页面下载对应平台的压缩包(Linux x86_64、macOS Apple Silicon、Windows x86_64),
+在 GitHub Releases 页面下载对应平台的压缩包(Linux x86_64、Linux arm64、macOS Apple Silicon、Windows x86_64;
+Linux arm64 自 v0.2.1 之后的版本起提供),
 解压后得到 `orbitscope` 可执行文件、示例配置与许可证。
 
 ### 1.2 从源码编译
-需要 Rust 1.88 或更新版本:
+需要 Rust 1.89 或更新版本:
 
 ```bash
 git clone https://github.com/70sDushuren/orbitscope
@@ -22,14 +23,23 @@ cargo build --release
 镜像内置 CesiumJS,浏览器无需访问 CDN:
 
 ```bash
+# 使用已发布的镜像(amd64 / arm64;v0.2.1 之后的版本提供)
+docker run -d -p 127.0.0.1:8080:8080 \
+  -v orbitscope-cache:/var/cache/orbitscope -v orbitscope-data:/var/lib/orbitscope \
+  ghcr.io/70sdushuren/orbitscope:latest
+
+# 或从源码构建
 docker compose up -d                  # 使用仓库中的 docker-compose.yml
-# 或
 docker build -t orbitscope .
 docker run -d -p 127.0.0.1:8080:8080 -v orbitscope-cache:/var/cache/orbitscope orbitscope
 ```
 
 自定义配置:`-v ./my.toml:/etc/orbitscope/config.toml:ro`(容器内需保留 `bind = "0.0.0.0:8080"` 与
 `cesium_dir = "/opt/cesium"`,参考 `docker/config.toml`)。
+
+**在网页上修改设置需要 token**:容器收到的请求来自 Docker 网络而不是本机,未设置 token 时"时间与数据"面板的修改会被拒绝。
+在 `docker-compose.yml` 同目录的 `.env` 文件中写入 `ORBITSCOPE_API_TOKEN=<至少 16 个字符>`(或 `docker run -e ORBITSCOPE_API_TOKEN=...`),
+重启后在面板的"API token"输入框中填写同一个值(只保存在本浏览器中)。只浏览不修改则无需设置。
 
 ### 1.4 开机自启 / 定时采集
 按采集策略(见第 3 节)选择:
@@ -105,7 +115,9 @@ max_total_mb = 4096    # 历史库空间上限,0 = 不限
 设置方式:配置 `[archive] time_policy`;命令行 `--policy`;Web 界面"时间与数据"。
 所有输出都注明数据依据(策略、数据时刻、根数获取时间范围);CSV/JSON 每行带 `fetched_at`。
 
-Web 界面可在"实时"与"指定时刻"之间切换:指定时刻后,服务端时钟从该时刻继续走,状态栏显示"回放"。
+Web 界面可在"实时"与"指定时刻"之间切换:指定时刻后,时钟从该时刻继续走,状态栏显示"回放"。
+**"指定时刻"只对当前页面生效**:其他访问者(以及你打开的其他页面)仍看到实时内容;切换时间不需要 API token,
+刷新页面后回到实时。时刻策略与采集策略则是服务端设置,对所有人生效。
 
 ### 3.4 采集策略
 | 策略 | 谁负责联网采集 | Web 服务 |
@@ -186,7 +198,8 @@ orbitscope serve                                      # Web 服务
 `serve` 参数:`--bind 0.0.0.0:8080`(覆盖配置)、`--sim-time <时刻>`(模拟时钟,用于回放旧数据或演示)。
 
 ### 6.1 CesiumJS 与离线使用
-浏览器端 3D 引擎 CesiumJS 默认从 jsDelivr 加载固定版本(`server.cesium_url`)。
+浏览器端 3D 引擎 CesiumJS 默认从 jsDelivr 加载固定版本(`server.cesium_url`),入口脚本与样式表带完整性校验
+(内容与官方发布包不一致时浏览器拒绝加载;自定义 `cesium_url` 时不校验)。
 完全离线时下载后配置 `server.cesium_dir`:
 
 ```bash
@@ -200,12 +213,15 @@ Docker 镜像已内置。
 默认只监听 `127.0.0.1`。对外开放时:
 - 设置 `bind = "0.0.0.0:8080"`(或放在反向代理之后);
 - 设置环境变量 `ORBITSCOPE_API_TOKEN`(≥ 16 字符)。写接口(修改默认过滤、手动刷新)需要
-  `Authorization: Bearer <token>`;未设置 token 时写接口只接受本机请求。读接口与 WebSocket 无需鉴权。
+  `Authorization: Bearer <token>`;未设置 token 时写接口只接受本机直接发起的请求。读接口与 WebSocket 无需鉴权。
+  网页上在"时间与数据"面板的"API token"输入框中填写(只保存在本浏览器中)。
+- **放在反向代理之后必须设置 token**:未设置时,带有 `X-Forwarded-For` 等转发头的写请求一律拒绝(403)。
 - 经反向代理(Nginx 等)时需转发 WebSocket(`Upgrade` / `Connection` 头)。
 
 ## 7. HTTP API
 
-前缀 `/api/v1`,全部为 JSON;错误为 `{"error": "..."}`。
+前缀 `/api/v1`,全部为 JSON;错误为 `{"error": "中文说明", "code": "稳定的错误代码", "params": {...}}`
+(程序可按 `code` 处理,代码列表见 [03-design.md](03-design.md) 第 5.2 节)。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -216,8 +232,8 @@ Docker 镜像已内置。
 | GET | `/stats` | 统计:过滤参数 + `bin_km` |
 | GET/PUT | `/filters/default` | 默认过滤条件(PUT 为局部 JSON 合并,写操作) |
 | POST | `/refresh` | 手动触发刷新(写操作;仍遵守数据源最短间隔) |
-| GET | `/client-config` | 前端配置(Cesium 地址等) |
-| GET/PUT | `/settings` | 时刻策略、采集策略、实时/指定时刻(PUT 为写操作:`{"time_policy": "known-at", "collect_mode": "daemon", "time": "live" 或 RFC3339}`) |
+| GET | `/client-config` | 前端配置(Cesium 地址与完整性校验值等) |
+| GET/PUT | `/settings` | 时刻策略、采集策略(PUT 为写操作:`{"time_policy": "known-at", "collect_mode": "daemon"}`)。"指定时刻"不在这里:它按 WebSocket 连接生效,见下 |
 | WS | `/stream` | 实时位置推送 |
 
 列表/统计的过滤查询参数:`alt_min`、`alt_max`、`alt_mode`、`min_size_cm`、`unknown_size`、
@@ -230,6 +246,10 @@ curl 'http://127.0.0.1:8080/api/v1/objects?alt_min=400&alt_max=450&types=debris&
 curl 'http://127.0.0.1:8080/api/v1/objects/25544/track?after_min=90&step_s=60'
 curl -X PUT -H 'Content-Type: application/json' -d '{"alt_max_km": 600}' http://127.0.0.1:8080/api/v1/filters/default
 ```
+
+查看某个时刻:REST 接口用 `at` 参数(如 `at=2026-11-16T08:00:00Z`)。WebSocket 连接在订阅消息中带 `"time"`
+(RFC3339 或 `"live"`)切换本连接的时间,服务端在 catalog 消息中返回该连接的 `view` 编号;REST 请求带上 `view=<编号>`
+即与该连接使用同一时钟和同一组数据。
 
 WebSocket 协议(订阅消息、元数据消息、二进制位置帧格式)见 [03-design.md](03-design.md) 第 5.3 节;
 Rust 解码实现在 `crates/orbit-server/src/frame.rs`,JavaScript 实现在 `web/js/stream.js`。
@@ -255,7 +275,7 @@ Rust 解码实现在 `crates/orbit-server/src/frame.rs`,JavaScript 实现在 `we
 | `历史库中没有满足条件的数据` | `known-at` 下该时刻早于第一次采集;换用 `--policy nearest-epoch` 或更晚的时刻 |
 | `所有数据源均失败` | 检查网络;`-v` 查看详细日志;离线时先在联网环境运行一次 `orbitscope fetch` |
 | 列表为空 | 检查根数龄期(`--any-age`)、高度与尺寸条件;`orbitscope stats` 查看整体分布 |
-| 浏览器提示无法加载 CesiumJS | 浏览器无法访问 jsDelivr,配置 `server.cesium_dir` 使用本地副本 |
+| 浏览器提示无法加载 CesiumJS | 浏览器无法访问 jsDelivr(或下载到的内容未通过完整性校验),配置 `server.cesium_dir` 使用本地副本 |
 | Space-Track 登录失败 | 检查环境变量;账号是否被临时停用(超频会被停用) |
 | `cesium_dir 中找不到 Cesium.js` | 路径应指向 `package/Build/Cesium`(其中直接包含 `Cesium.js`) |
-| 写接口返回 403 / 401 | 未设置 token 时只能本机调用;设置 `ORBITSCOPE_API_TOKEN` 并携带 Bearer 头 |
+| 写接口返回 403 / 401,或网页上无法应用设置 | 未设置 token 时只能本机直接调用(Docker、反向代理、其他电脑都不算本机);设置 `ORBITSCOPE_API_TOKEN`,命令行携带 Bearer 头,网页上在"时间与数据"面板填写 token |

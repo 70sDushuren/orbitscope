@@ -76,6 +76,10 @@ pub struct SourceStatus {
     pub resources: Vec<ResourceStatus>,
     pub notes: Vec<String>,
     pub error: Option<String>,
+    /// 失败时的错误代码(见 [`SourceError::code`]),界面据此显示本地化说明
+    pub error_code: Option<&'static str>,
+    /// 失败时的具体内容(见 [`SourceError::detail`])
+    pub error_detail: Option<String>,
 }
 
 /// 数据源总配置。
@@ -221,6 +225,8 @@ impl SourceSet {
                         resources: batch.resources,
                         notes: batch.notes,
                         error: None,
+                        error_code: None,
+                        error_detail: None,
                     });
                     out.records.extend(batch.records);
                     for (id, m) in batch.extra_meta {
@@ -239,6 +245,8 @@ impl SourceSet {
                         resources: Vec::new(),
                         notes: Vec::new(),
                         error: Some(e.to_string()),
+                        error_code: Some(e.code()),
+                        error_detail: Some(e.detail()),
                     });
                 }
             }

@@ -279,8 +279,68 @@ async fn write_endpoints_require_token_when_configured() {
     assert_eq!(put(None).await.unwrap().status(), 401);
     assert_eq!(put(Some("Bearer wrong-token-12")).await.unwrap().status(), 401);
     assert_eq!(put(Some("Bearer test-token-123")).await.unwrap().status(), 200);
+    // 401 带机器可读的错误代码,设置接口说明需要 token(界面据此显示输入框)
+    let body: Value = put(None).await.unwrap().json().await.unwrap();
+    assert_eq!(body["code"], "token_required");
+    assert_eq!(s.get("/api/v1/settings").await.1["token_required"], true);
     // 读接口不需要 token
     assert_eq!(s.get("/api/v1/filters/default").await.1["alt_min_km"], 200.0);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn write_without_token_rejects_requests_forwarded_by_a_proxy() {
+    // 未配置 token:本机直接请求可写;经反向代理转发的请求(连接来源同样是本机)必须拒绝
+    let s = TestServer::start(|_| {}).await;
+    assert_eq!(s.get("/api/v1/settings").await.1["token_required"], false);
+    let put = |header: Option<(&'static str, &'static str)>| {
+        let mut req = s
+            .client
+            .put(s.url("/api/v1/filters/default"))
+            .json(&json!({"alt_min_km": 300}));
+        if let Some((k, v)) = header {
+            req = req.header(k, v);
+        }
+        req.send()
+    };
+    assert_eq!(put(None).await.unwrap().status(), 200);
+    for h in [
+        ("x-forwarded-for", "203.0.113.7"),
+        ("x-real-ip", "203.0.113.7"),
+        ("forwarded", "for=203.0.113.7"),
+        ("x-forwarded-proto", "https"),
+        ("via", "1.1 proxy"),
+    ] {
+        let resp = put(Some(h)).await.unwrap();
+        assert_eq!(resp.status(), 403, "{h:?}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["code"], "local_only", "{h:?}");
+    }
+    // 其他写接口同样拒绝
+    let resp = s
+        .client
+        .post(s.url("/api/v1/refresh"))
+        .header("x-forwarded-for", "203.0.113.7")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn write_with_token_works_through_a_proxy() {
+    let s = TestServer::start(|o| o.api_token = Some("test-token-123".into())).await;
+    let resp = s
+        .client
+        .put(s.url("/api/v1/filters/default"))
+        .header("x-forwarded-for", "203.0.113.7")
+        .header("authorization", "Bearer test-token-123")
+        .json(&json!({"alt_min_km": 250}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
     s.stop().await;
 }
 
@@ -469,6 +529,19 @@ async fn web_frontend_and_client_config() {
 
     let (_, cfg) = s.get("/api/v1/client-config").await;
     assert_eq!(cfg["cesium_base_url"], orbit_server::DEFAULT_CESIUM_URL);
+    // 默认 CDN 地址附带完整性校验值
+    assert!(
+        cfg["cesium_integrity"]["js"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha384-")
+    );
+    assert!(
+        cfg["cesium_integrity"]["css"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha384-")
+    );
     assert_eq!(cfg["tick_ms"], 100);
     // 未配置本地目录时不提供 /cesium/
     assert_eq!(
@@ -493,6 +566,7 @@ async fn local_cesium_dir_is_served() {
     let s = TestServer::start(move |o| o.cesium_dir = Some(dir)).await;
     let (_, cfg) = s.get("/api/v1/client-config").await;
     assert_eq!(cfg["cesium_base_url"], "/cesium/");
+    assert!(cfg["cesium_integrity"].is_null());
     let r = s.client.get(s.url("/cesium/Cesium.js")).send().await.unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(r.text().await.unwrap(), "/* fake cesium */");
@@ -588,22 +662,88 @@ async fn history_known_at_and_runtime_settings() {
     assert_eq!(st["provenance"]["first_seen_max"], "2024-01-01T12:10:00Z");
     let (_, set) = s.get("/api/v1/settings").await;
     assert_eq!(set["time_policy"], "known-at");
-    assert_eq!(set["time_mode"], "fixed");
     assert_eq!(set["history_enabled"], true);
     assert_eq!(set["policies"].as_array().unwrap().len(), 3);
     let (_, list) = s.get("/api/v1/objects").await;
     assert_eq!(list["items"][0]["fetched_at"], "2024-01-01T12:10:00Z");
 
-    // 切换到获取时间之前的时刻:known-at 下没有数据
-    let (code, v) = put_settings(&s, json!({"time": "2024-01-01T12:05:00Z"})).await;
-    assert_eq!(code, 200, "{v}");
-    let st = wait_for(&s, |v| v["objects"] == 0).await;
-    assert_eq!(st["generation"], 2);
+    // 一个连接切换到获取时间之前的时刻:known-at 下该连接没有数据
+    let mut ws = ws_connect(&s).await;
+    assert_eq!(next_text(&mut ws).await["type"], "hello");
+    let subscribe = |time: &str| {
+        Message::Text(
+            json!({"type":"subscribe","filter":{"max_epoch_age_days":null},"rate_hz":5,"time":time})
+                .to_string()
+                .into(),
+        )
+    };
+    ws.send(subscribe("2024-01-01T12:05:00Z")).await.unwrap();
+    let cat = next_text(&mut ws).await;
+    assert_eq!(cat["type"], "catalog", "{cat}");
+    assert_eq!(cat["total"], 0);
+    assert_eq!(cat["time_mode"], "fixed");
+    assert!(cat["time"].as_str().unwrap().starts_with("2024-01-01T12:05"));
+    let view = cat["view"].as_str().unwrap().to_string();
+    // 带 view 的 REST 请求使用该连接的时刻与数据
+    let (_, st) = s.get(&format!("/api/v1/status?view={view}")).await;
+    assert_eq!(st["objects"], 0, "{st}");
+    assert_eq!(st["time_mode"], "fixed");
+    assert_eq!(st["view"], view);
+    assert!(st["server_time"].as_str().unwrap().starts_with("2024-01-01T12:0"));
+    let (_, list) = s.get(&format!("/api/v1/objects?view={view}&any_age=true")).await;
+    assert_eq!(list["total"], 0);
+    assert!(list["time"].as_str().unwrap().starts_with("2024-01-01T12:0"));
+    // 其他访问者(不带 view)不受影响
+    let (_, st) = s.get("/api/v1/status").await;
+    assert_eq!(st["objects"], 2);
+    assert_eq!(st["time_mode"], "live");
+    assert_eq!(st["generation"], 1);
 
-    // 同一时刻切换为 nearest-epoch:数据回来
+    // 时刻策略(全局设置)切换为 nearest-epoch:该连接的数据回来
     put_settings(&s, json!({"time_policy": "nearest-epoch"})).await;
-    let st = wait_for(&s, |v| v["objects"] == 2).await;
+    let cat = next_text(&mut ws).await;
+    assert_eq!(cat["type"], "catalog", "{cat}");
+    assert_eq!(cat["total"], 2);
+    assert_eq!(cat["view"], view);
+    let f = frame::decode(&next_binary(&mut ws).await).unwrap();
+    assert_eq!(f.entries.len(), 2);
+    assert!(f.time.to_rfc3339().starts_with("2024-01-01T12:0"), "{}", f.time);
+    let (_, st) = s.get(&format!("/api/v1/status?view={view}")).await;
     assert_eq!(st["provenance"]["policy"], "nearest-epoch");
+    let st = wait_for(&s, |v| v["provenance"]["policy"] == "nearest-epoch").await;
+    assert_eq!(st["objects"], 2);
+
+    // 无法解析的时刻:报错,连接保持原来的时间
+    ws.send(subscribe("yesterday")).await.unwrap();
+    let err = next_text(&mut ws).await;
+    assert_eq!(err["type"], "error");
+    assert_eq!(err["code"], "bad_time");
+
+    // 回到实时:视图随即移除
+    ws.send(subscribe("live")).await.unwrap();
+    let cat = next_text(&mut ws).await;
+    assert_eq!(cat["time_mode"], "live");
+    assert!(cat["view"].is_null());
+    assert_eq!(cat["total"], 2);
+    let (code, gone) = s.get(&format!("/api/v1/status?view={view}")).await;
+    assert_eq!(code, 404);
+    assert_eq!(gone["code"], "view_gone");
+
+    // 连接断开后视图也会移除
+    ws.send(subscribe("2024-01-01T12:20:00Z")).await.unwrap();
+    let cat = next_text(&mut ws).await;
+    let view = cat["view"].as_str().unwrap().to_string();
+    assert_eq!(s.get(&format!("/api/v1/status?view={view}")).await.0, 200);
+    drop(ws);
+    let mut code = 200;
+    for _ in 0..100 {
+        code = s.get(&format!("/api/v1/status?view={view}")).await.0;
+        if code == 404 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(code, 404, "连接断开后视图应被移除");
 
     // 设置已保存到磁盘(时间不保存)
     let saved: Value = serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
@@ -618,11 +758,7 @@ async fn history_known_at_and_runtime_settings() {
     let st = wait_for(&s, |v| v["schedule"]["next_refresh"].is_null()).await;
     assert!(st["schedule"]["next_reload"].is_string());
 
-    // 回到实时
-    let (_, v) = put_settings(&s, json!({"time": "live"})).await;
-    assert_eq!(v["time_mode"], "live");
-
-    // 非法值
+    // 非法值("指定时刻"已改为按连接生效,不再是服务端设置)
     for bad in [
         json!({"time_policy": "x"}),
         json!({"collect_mode": "cron"}),

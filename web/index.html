@@ -34,6 +34,7 @@
         <label class="check"><input type="radio" name="time_mode" value="live"> <span data-i18n="settings.live">实时</span></label>
         <label class="check"><input type="radio" name="time_mode" value="fixed"> <span data-i18n="settings.fixed">指定时刻(UTC,时钟从该时刻继续走)</span></label>
         <input type="datetime-local" name="fixed_time" step="1" data-i18n-aria-label="settings.fixedLabel" aria-label="指定时刻(UTC)">
+        <p class="muted small" data-i18n="settings.timeHint">时间只对本页面生效,不影响其他访问者。</p>
       </fieldset>
       <label><span data-i18n="settings.policy">时刻策略(该时刻用哪组根数)</span>
         <select name="time_policy"></select>
@@ -42,6 +43,10 @@
         <select name="collect_mode"></select>
       </label>
       <p class="muted small" id="collect-hint"></p>
+      <label id="token-field" hidden><span data-i18n="settings.token">API token(修改设置时需要)</span>
+        <input type="password" name="api_token" autocomplete="off" spellcheck="false">
+        <span class="muted small" data-i18n="settings.tokenHint">只保存在本浏览器中。</span>
+      </label>
       <p class="hint" id="settings-error" role="alert"></p>
       <div class="buttons">
         <button type="submit" class="primary" data-i18n="settings.apply">应用设置</button>

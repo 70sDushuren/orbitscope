@@ -1,13 +1,13 @@
 // OrbitScope 前端入口。
 
-import { api } from './api.js';
-import { LOCALES, initI18n, locale, setLocale, t } from './i18n.js';
+import { api, getApiToken, setApiToken, setView } from './api.js';
+import { LOCALES, errText, initI18n, locale, setLocale, t } from './i18n.js';
 import { clearSaved, fillForm, loadSaved, readForm, save, toQuery } from './filter.js';
 import { Globe, loadCesium } from './globe.js';
 import {
   n, renderDetails, renderHistogram, renderLive, renderSources, renderTypeBars, renderTypeChecks,
 } from './panels.js';
-import { readSettings, renderFetches, renderProvenance, renderSettings, updateCollectHint } from './settings.js';
+import { readSettings, readTime, renderFetches, renderProvenance, renderSettings, updateCollectHint } from './settings.js';
 import { Stream } from './stream.js';
 
 const $ = (id) => document.getElementById(id);
@@ -27,7 +27,15 @@ const state = {
   catalogTotal: 0,
   selected: null, // { i, id, data, inSubscription }
   showTrack: true,
+  // 本页面的时间模式('live' 实时 / 'fixed' 指定时刻)与对应视图编号,由服务端的 catalog 消息确认
+  timeMode: 'live',
+  view: null,
 };
+
+/** 设置表单用的时间状态:当前模式与正在显示的时刻。 */
+function timeState() {
+  return { mode: state.timeMode, ms: (globe && globe.displayTimeMs()) || Date.now() };
+}
 
 const detailDom = {
   panel: $('right'), name: $('d-name'), type: $('d-type'), static: $('d-static'),
@@ -56,7 +64,7 @@ async function refreshStats() {
     $('hist-title').textContent = t('stats.histTitle', { bin: BIN_KM });
     renderHistogram($('histogram'), $('hist-table'), s.altitude_histogram, BIN_KM, $('tooltip'));
   } catch (e) {
-    $('stats-total').textContent = t('stats.failed', { error: e.message });
+    $('stats-total').textContent = t('stats.failed', { error: errText(e) });
   }
 }
 
@@ -183,12 +191,12 @@ async function main() {
     cfg = await api.clientConfig();
     state.defaultFilter = await api.defaultFilter();
   } catch (e) {
-    fail(t('app.cannotConnect', { error: e.message }));
+    fail(t('app.cannotConnect', { error: errText(e) }));
     return;
   }
 
   try {
-    const Cesium = await loadCesium(cfg.cesium_base_url);
+    const Cesium = await loadCesium(cfg.cesium_base_url, cfg.cesium_integrity);
     globe = new Globe(Cesium, $('globe'));
   } catch (e) {
     fail(t('app.cesiumFailed', { url: e.cesiumUrl || cfg.cesium_base_url }));
@@ -200,6 +208,12 @@ async function main() {
     state: setConn,
     hello: () => {},
     catalog: (msg) => {
+      // 时间模式或视图变了(切换时间、断线重连):REST 请求改用新视图,并刷新依赖时刻的内容
+      const viewChanged = (msg.view || null) !== state.view;
+      state.view = msg.view || null;
+      state.timeMode = msg.time_mode === 'fixed' ? 'fixed' : 'live';
+      setView(state.view);
+      $('st-replay').hidden = state.timeMode !== 'fixed';
       state.generation = msg.generation;
       const t0 = performance.now();
       globe.setCatalog(msg.objects);
@@ -211,6 +225,10 @@ async function main() {
         globe.select(state.selected.i);
       }
       refreshStats();
+      if (viewChanged) {
+        refreshStatus();
+        if (state.selected) selectObject(state.selected.i, state.selected.id);
+      }
     },
     frame: (f) => {
       if (f.generation !== (state.generation >>> 0)) return;
@@ -220,7 +238,8 @@ async function main() {
       if (state.filter && state.filter.altitude_mode === 'instantaneous') setShown(shown);
     },
     error: (msg) => {
-      $('filter-error').textContent = msg.message;
+      // 时间相关的错误显示在时间设置处,其余显示在过滤表单处
+      $(msg.code === 'bad_time' ? 'settings-error' : 'filter-error').textContent = errText(msg);
     },
   });
   stream.connect();
@@ -239,24 +258,44 @@ async function main() {
 
   // 时间与数据设置
   const sform = $('settings-form');
+  // 服务端要求 token(或本浏览器已保存过 token)时显示输入框
+  const showTokenField = () => {
+    $('token-field').hidden = false;
+  };
+  sform.api_token.value = getApiToken();
+  if (sform.api_token.value) showTokenField();
   try {
     state.settings = await api.settings();
-    renderSettings(sform, state.settings);
+    renderSettings(sform, state.settings, timeState());
+    if (state.settings.token_required) showTokenField();
   } catch (e) {
-    $('settings-error').textContent = t('settings.loadFailed', { error: e.message });
+    $('settings-error').textContent = t('settings.loadFailed', { error: errText(e) });
   }
+  // 时间只属于本页面:改动过才在"应用设置"时生效(否则会把正在走的时钟拨回去)
+  let timeDirty = false;
+  sform.fixed_time.addEventListener('input', () => (timeDirty = true));
   sform.collect_mode.addEventListener('change', () => updateCollectHint(sform));
   for (const r of sform.querySelectorAll('input[name=time_mode]')) {
-    r.addEventListener('change', () => (sform.fixed_time.disabled = r.value !== 'fixed' || !r.checked));
+    r.addEventListener('change', () => {
+      timeDirty = true;
+      sform.fixed_time.disabled = r.value !== 'fixed' || !r.checked;
+    });
   }
   sform.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     $('settings-error').textContent = '';
     try {
+      // 时间:只切换本页面的连接,不改服务端设置,也不需要 token
+      if (timeDirty) {
+        stream.setTime(readTime(sform));
+        timeDirty = false;
+      }
+      if (!state.settings) return;
+      setApiToken(sform.api_token.value.trim());
       const patch = readSettings(sform, state.settings);
       if (Object.keys(patch).length === 0) return;
       state.settings = await api.putSettings(patch);
-      renderSettings(sform, state.settings);
+      renderSettings(sform, state.settings, timeState());
       // 服务端在后台按新设置重建编目;稍后刷新状态与统计
       setTimeout(refreshStatus, 800);
       setTimeout(() => {
@@ -264,7 +303,11 @@ async function main() {
         refreshStats();
       }, 2500);
     } catch (e) {
-      $('settings-error').textContent = e.message;
+      if (e.code === 'token_required') {
+        showTokenField();
+        sform.api_token.focus();
+      }
+      $('settings-error').textContent = errText(e);
     }
   });
 
@@ -391,7 +434,7 @@ async function main() {
         results.innerHTML = '';
         const li = document.createElement('li');
         li.className = 'muted small';
-        li.textContent = t('search.failed', { error: e.message });
+        li.textContent = t('search.failed', { error: errText(e) });
         results.append(li);
       }
     }, 300);
@@ -404,7 +447,7 @@ async function main() {
     if (state.filter) fillForm(form, state.filter);
     $('filter-error').textContent = '';
     $('settings-error').textContent = '';
-    if (state.settings) renderSettings(sform, state.settings);
+    if (state.settings && !timeDirty) renderSettings(sform, state.settings, timeState());
     if (state.connected !== undefined) setConn(state.connected);
     if (state.shownCount !== undefined) setShown(state.shownCount);
     if (state.selected) renderDetails(detailDom, state.selected.data);

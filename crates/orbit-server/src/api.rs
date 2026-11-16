@@ -1,7 +1,8 @@
 //! REST API(前缀 `/api/v1`)。
 
+use crate::errors::Coded;
 use crate::query::{ListQuery, merge_filter};
-use crate::state::AppState;
+use crate::state::{AppState, Scope};
 use crate::ws::{ClientGuard, handle_socket};
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{ConnectInfo, Path, Query, State};
@@ -21,11 +22,15 @@ use std::sync::atomic::Ordering;
 pub const DEFAULT_PER_PAGE: usize = 100;
 pub const MAX_PER_PAGE: usize = 5_000;
 
-/// API 错误:JSON `{"error": "..."}`。
+/// API 错误:JSON `{"error": "...", "code": "...", "params": {...}}`。
+///
+/// `error` 为中文说明;`code` 与 `params` 供界面显示所选语言的说明(见 [`crate::errors`])。
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
     message: String,
+    code: Option<&'static str>,
+    params: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ApiError {
@@ -33,22 +38,57 @@ impl ApiError {
         Self {
             status,
             message: message.into(),
+            code: None,
+            params: serde_json::Map::new(),
         }
     }
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::BAD_REQUEST, message)
+    fn coded(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code: Some(code),
+            ..Self::new(status, message)
+        }
+    }
+    fn bad(code: &'static str, message: impl Into<String>) -> Self {
+        Self::coded(StatusCode::BAD_REQUEST, code, message)
+    }
+    fn param(mut self, name: &str, value: impl Into<serde_json::Value>) -> Self {
+        self.params.insert(name.to_string(), value.into());
+        self
+    }
+    fn internal(e: impl std::fmt::Display) -> Self {
+        Self::coded(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+            .param("detail", e.to_string())
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        let mut body = serde_json::Map::new();
+        body.insert("error".into(), self.message.into());
+        if let Some(code) = self.code {
+            body.insert("code".into(), code.into());
+            if !self.params.is_empty() {
+                body.insert("params".into(), self.params.into());
+            }
+        }
+        (self.status, Json(serde_json::Value::Object(body))).into_response()
+    }
+}
+
+impl From<Coded> for ApiError {
+    fn from(e: Coded) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: e.message,
+            code: Some(e.code),
+            params: e.params,
+        }
     }
 }
 
 impl From<orbit_core::CoreError> for ApiError {
     fn from(e: orbit_core::CoreError) -> Self {
-        Self::bad_request(e.to_string())
+        Coded::from(e).into()
     }
 }
 
@@ -73,15 +113,41 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-fn parse_at(state: &AppState, at: Option<&str>) -> Result<DateTime<Utc>, ApiError> {
-    let now = state.now();
+/// 请求所用的编目与时钟:带 `view=<编号>` 时用该连接的"指定时刻"视图,否则用服务端实时的。
+fn scope_of(state: &AppState, view: Option<&str>) -> Result<Scope, ApiError> {
+    state.scope(view).ok_or_else(|| {
+        ApiError::coded(
+            StatusCode::NOT_FOUND,
+            "view_gone",
+            "指定时刻的视图已不存在(对应的连接已断开或已回到实时)",
+        )
+    })
+}
+
+fn parse_at(scope: &Scope, at: Option<&str>) -> Result<DateTime<Utc>, ApiError> {
     match at {
-        None => Ok(now),
-        Some(s) => Ok(parse_time_arg(s, now)?),
+        None => Ok(scope.now),
+        Some(s) => Ok(parse_time_arg(s, scope.now)?),
     }
 }
 
-/// 写操作鉴权:配置了 token 时要求 `Authorization: Bearer <token>`;否则只允许本机地址。
+/// 反向代理转发请求时附带的请求头。带有其中任何一个的请求不是直接来自本机的浏览器或命令行。
+const FORWARDED_HEADERS: [&str; 6] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "via",
+];
+
+/// 请求是否经过了反向代理(此时连接来源是代理的地址,不能代表真正的访问者)。
+fn is_forwarded(headers: &HeaderMap) -> bool {
+    FORWARDED_HEADERS.iter().any(|h| headers.contains_key(*h))
+}
+
+/// 写操作鉴权:配置了 token 时要求 `Authorization: Bearer <token>`;
+/// 否则只允许本机直接发起的请求(来源为本机地址,且没有经过反向代理)。
 fn check_write(state: &AppState, headers: &HeaderMap, peer: SocketAddr) -> Result<(), ApiError> {
     match &state.options.api_token {
         Some(token) => {
@@ -100,13 +166,24 @@ fn check_write(state: &AppState, headers: &HeaderMap, peer: SocketAddr) -> Resul
             if ok {
                 Ok(())
             } else {
-                Err(ApiError::new(StatusCode::UNAUTHORIZED, "需要有效的 API token"))
+                Err(ApiError::coded(
+                    StatusCode::UNAUTHORIZED,
+                    "token_required",
+                    "需要有效的 API token",
+                ))
             }
         }
-        None if peer.ip().is_loopback() => Ok(()),
-        None => Err(ApiError::new(
+        // 经反向代理转发的请求,连接来源是代理(常为本机地址),不能当作本机请求放行
+        None if is_forwarded(headers) => Err(ApiError::coded(
             StatusCode::FORBIDDEN,
-            "未配置 API token 时,写操作只允许本机访问",
+            "local_only",
+            "未配置 API token 时,写操作不接受经反向代理转发的请求;请设置 ORBITSCOPE_API_TOKEN",
+        )),
+        None if peer.ip().is_loopback() => Ok(()),
+        None => Err(ApiError::coded(
+            StatusCode::FORBIDDEN,
+            "local_only",
+            "未配置 API token 时,写操作只允许本机访问;请设置 ORBITSCOPE_API_TOKEN",
         )),
     }
 }
@@ -114,9 +191,17 @@ fn check_write(state: &AppState, headers: &HeaderMap, peer: SocketAddr) -> Resul
 // ------------------------------------------------------------------ handlers
 
 #[derive(Serialize)]
+struct CesiumIntegrity {
+    js: &'static str,
+    css: &'static str,
+}
+
+#[derive(Serialize)]
 struct ClientConfig {
     version: &'static str,
     cesium_base_url: String,
+    /// 从默认 CDN 地址加载时的完整性校验值;本地目录或自定义地址时为 null
+    cesium_integrity: Option<CesiumIntegrity>,
     tick_ms: u64,
     max_rate_hz: f64,
 }
@@ -127,9 +212,14 @@ async fn client_config(State(state): State<Arc<AppState>>) -> Json<ClientConfig>
     } else {
         state.options.cesium_base_url.clone()
     };
+    let cesium_integrity = (cesium_base_url == crate::state::DEFAULT_CESIUM_URL).then_some(CesiumIntegrity {
+        js: crate::state::DEFAULT_CESIUM_JS_INTEGRITY,
+        css: crate::state::DEFAULT_CESIUM_CSS_INTEGRITY,
+    });
     Json(ClientConfig {
         version: env!("CARGO_PKG_VERSION"),
         cesium_base_url,
+        cesium_integrity,
         tick_ms: state.options.tick.as_millis() as u64,
         max_rate_hz: crate::ws::MAX_RATE_HZ,
     })
@@ -154,10 +244,22 @@ struct StatusResponse {
     provenance: Option<orbit_archive::Provenance>,
     /// 历史库中最近的采集记录
     recent_fetches: Vec<orbit_archive::FetchRow>,
+    /// "live"(实时)或 "fixed"(请求带了 `view`:该连接的指定时刻)
+    time_mode: &'static str,
+    /// 请求所用视图的编号;实时为 null
+    view: Option<String>,
 }
 
-async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
-    let cs = state.catalog.load_full();
+/// 只带 `view` 的查询参数。
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct ViewQuery {
+    view: Option<String>,
+}
+
+async fn status(State(state): State<Arc<AppState>>, Query(q): Query<ViewQuery>) -> ApiResult<StatusResponse> {
+    let scope = scope_of(&state, q.view.as_deref())?;
+    let cs = scope.catalog.clone();
     let recent_fetches = match state.options.archive.clone() {
         Some(a) => tokio::task::spawn_blocking(move || a.history().map(|h| h.recent_fetches(10)))
             .await
@@ -167,11 +269,15 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
             .unwrap_or_default(),
         None => Vec::new(),
     };
-    Json(StatusResponse {
+    Ok(Json(StatusResponse {
         version: env!("CARGO_PKG_VERSION"),
         started_at: state.started_at,
-        server_time: state.now(),
-        time_offset_secs: state.settings().time_offset.num_seconds(),
+        server_time: scope.now,
+        time_offset_secs: scope
+            .view
+            .as_ref()
+            .map_or(state.settings().time_offset, |v| v.offset)
+            .num_seconds(),
         generation: cs.generation,
         objects: cs.catalog.len(),
         catalog_loaded_at: cs.loaded_at,
@@ -183,7 +289,9 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
         settings: settings_response(&state),
         provenance: cs.provenance.clone(),
         recent_fetches,
-    })
+        time_mode: if scope.view.is_some() { "fixed" } else { "live" },
+        view: scope.view.as_ref().map(|v| v.id.clone()),
+    }))
 }
 
 // ------------------------------------------------------------------ settings
@@ -198,13 +306,11 @@ struct Choice {
 struct SettingsResponse {
     time_policy: orbit_archive::TimePolicy,
     collect_mode: orbit_archive::CollectMode,
-    /// "live"(实时)或 "fixed"(指定时刻,时钟从该时刻继续走)
-    time_mode: &'static str,
-    server_time: DateTime<Utc>,
-    time_offset_secs: i64,
     history_enabled: bool,
     /// 设置是否会保存到磁盘(否则只在本次运行有效)
     persisted: bool,
+    /// 写操作是否需要 API token(界面据此显示 token 输入框)
+    token_required: bool,
     policies: Vec<Choice>,
     collect_modes: Vec<Choice>,
 }
@@ -214,15 +320,13 @@ fn settings_response(state: &AppState) -> SettingsResponse {
     SettingsResponse {
         time_policy: s.time_policy,
         collect_mode: s.collect_mode,
-        time_mode: if s.time_offset.is_zero() { "live" } else { "fixed" },
-        server_time: state.now(),
-        time_offset_secs: s.time_offset.num_seconds(),
         history_enabled: state
             .options
             .archive
             .as_ref()
             .is_some_and(|a| a.history().is_some()),
         persisted: state.options.settings_path.is_some(),
+        token_required: state.options.api_token.is_some(),
         policies: orbit_archive::TimePolicy::ALL
             .iter()
             .map(|p| Choice {
@@ -249,8 +353,6 @@ async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsRespon
 struct SettingsPatch {
     time_policy: Option<String>,
     collect_mode: Option<String>,
-    /// "live" 回到实时;或 RFC3339 时刻(时钟从该时刻继续走)
-    time: Option<String>,
 }
 
 async fn put_settings(
@@ -265,32 +367,24 @@ async fn put_settings(
         .as_deref()
         .map(str::parse::<orbit_archive::TimePolicy>)
         .transpose()
-        .map_err(ApiError::bad_request)?;
+        .map_err(|m| {
+            ApiError::bad("unknown_policy", m).param("value", patch.time_policy.clone().unwrap_or_default())
+        })?;
     let mode = patch
         .collect_mode
         .as_deref()
         .map(str::parse::<orbit_archive::CollectMode>)
         .transpose()
-        .map_err(ApiError::bad_request)?;
-    let offset = match patch.time.as_deref().map(str::trim) {
-        None => None,
-        Some(t) if t.eq_ignore_ascii_case("live") => Some(chrono::Duration::zero()),
-        Some(t) => {
-            let at = DateTime::parse_from_rfc3339(t)
-                .map_err(|e| ApiError::bad_request(format!("无法解析时刻 {t:?}: {e}")))?
-                .with_timezone(&Utc);
-            Some(at - Utc::now())
-        }
-    };
+        .map_err(|m| {
+            ApiError::bad("unknown_collect_mode", m)
+                .param("value", patch.collect_mode.clone().unwrap_or_default())
+        })?;
     let new = state.update_settings(|s| {
         if let Some(p) = policy {
             s.time_policy = p;
         }
         if let Some(m) = mode {
             s.collect_mode = m;
-        }
-        if let Some(o) = offset {
-            s.time_offset = o;
         }
     });
     if let Some(path) = &state.options.settings_path {
@@ -302,7 +396,7 @@ async fn put_settings(
             tracing::warn!(error = %e, "保存界面设置失败");
         }
     }
-    tracing::info!(policy = %new.time_policy, mode = %new.collect_mode, offset_s = new.time_offset.num_seconds(), "设置已更新");
+    tracing::info!(policy = %new.time_policy, mode = %new.collect_mode, "设置已更新");
     // 立即按新设置重建编目(切换到 serve 采集时同时联网采集一次)
     let kind = if mode == Some(orbit_archive::CollectMode::Serve) {
         crate::state::RefreshKind::Collect
@@ -324,7 +418,7 @@ async fn put_default_filter(
     Json(patch): Json<serde_json::Value>,
 ) -> ApiResult<orbit_core::Filter> {
     check_write(&state, &headers, peer)?;
-    let f = merge_filter(&state.default_filter(), &patch).map_err(ApiError::bad_request)?;
+    let f = merge_filter(&state.default_filter(), &patch)?;
     state.set_default_filter(f.clone());
     tracing::info!("默认过滤条件已更新");
     Ok(Json(f))
@@ -361,9 +455,11 @@ fn sort_rows(rows: &mut [ObjectSummary], key: &str, desc: bool) -> Result<(), Ap
         "age" => Box::new(move |a, b| f(Some(a.epoch_age_days), Some(b.epoch_age_days))),
         "size" => Box::new(move |a, b| f(size(a), size(b))),
         other => {
-            return Err(ApiError::bad_request(format!(
-                "未知的排序字段 {other:?}(可选 id, name, alt, perigee, apogee, inc, age, size)"
-            )));
+            return Err(ApiError::bad(
+                "unknown_sort",
+                format!("未知的排序字段 {other:?}(可选 id, name, alt, perigee, apogee, inc, age, size)"),
+            )
+            .param("value", other));
         }
     };
     rows.sort_by(|a, b| if desc { cmp(b, a) } else { cmp(a, b) });
@@ -374,14 +470,15 @@ async fn list_objects(
     State(state): State<Arc<AppState>>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<ListResponse> {
-    let filter = q.apply(&state.default_filter()).map_err(ApiError::bad_request)?;
-    let at = parse_at(&state, q.at.as_deref())?;
+    let filter = q.apply(&state.default_filter())?;
+    let scope = scope_of(&state, q.view.as_deref())?;
+    let at = parse_at(&scope, q.at.as_deref())?;
     let per_page = q.per_page.unwrap_or(DEFAULT_PER_PAGE).clamp(1, MAX_PER_PAGE);
     let page = q.page.unwrap_or(1).max(1);
     let sort = q.sort.clone().unwrap_or_else(|| "id".into());
     let desc = q.desc.unwrap_or(false);
 
-    let cs = state.catalog.load_full();
+    let cs = scope.catalog;
     let resp = tokio::task::spawn_blocking(move || -> Result<ListResponse, ApiError> {
         let cat = &cs.catalog;
         let idx = cat.select(&filter, at);
@@ -416,7 +513,7 @@ async fn list_objects(
         })
     })
     .await
-    .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))??;
+    .map_err(ApiError::internal)??;
     Ok(Json(resp))
 }
 
@@ -433,14 +530,20 @@ struct ObjectResponse {
 #[serde(default)]
 struct AtQuery {
     at: Option<String>,
+    /// 使用某个连接的"指定时刻"视图
+    view: Option<String>,
 }
 
-fn find(state: &AppState, id: u32) -> Result<(Arc<crate::state::CatalogState>, usize), ApiError> {
-    let cs = state.catalog.load_full();
-    let idx = cs
-        .catalog
-        .index_of(id)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("编目中没有 NORAD {id}")))?;
+fn find(scope: Scope, id: u32) -> Result<(Arc<crate::state::CatalogState>, usize), ApiError> {
+    let cs = scope.catalog;
+    let idx = cs.catalog.index_of(id).ok_or_else(|| {
+        ApiError::coded(
+            StatusCode::NOT_FOUND,
+            "object_not_found",
+            format!("编目中没有 NORAD {id}"),
+        )
+        .param("id", id)
+    })?;
     Ok((cs, idx))
 }
 
@@ -449,8 +552,9 @@ async fn get_object(
     Path(id): Path<u32>,
     Query(q): Query<AtQuery>,
 ) -> ApiResult<ObjectResponse> {
-    let at = parse_at(&state, q.at.as_deref())?;
-    let (cs, idx) = find(&state, id)?;
+    let scope = scope_of(&state, q.view.as_deref())?;
+    let at = parse_at(&scope, q.at.as_deref())?;
+    let (cs, idx) = find(scope, id)?;
     let o = &cs.catalog.objects()[idx];
     let (st, error) = match cs.catalog.propagate(idx, at) {
         Ok(s) => (Some(s), None),
@@ -475,6 +579,8 @@ struct TrackQuery {
     after_min: Option<f64>,
     /// 步长(秒),默认 30
     step_s: Option<f64>,
+    /// 使用某个连接的"指定时刻"视图
+    view: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -491,8 +597,9 @@ async fn get_track(
     Path(id): Path<u32>,
     Query(q): Query<TrackQuery>,
 ) -> ApiResult<TrackResponse> {
-    let at = parse_at(&state, q.at.as_deref())?;
-    let (cs, idx) = find(&state, id)?;
+    let scope = scope_of(&state, q.view.as_deref())?;
+    let at = parse_at(&scope, q.at.as_deref())?;
+    let (cs, idx) = find(scope, id)?;
     let period = cs.catalog.objects()[idx].derived.period_min;
     let before = q.before_min.unwrap_or(0.0);
     let after = q
@@ -501,16 +608,21 @@ async fn get_track(
     let step_s = q.step_s.unwrap_or(30.0);
     for (name, v) in [("before_min", before), ("after_min", after)] {
         if !v.is_finite() || !(0.0..=10_080.0).contains(&v) {
-            return Err(ApiError::bad_request(format!("{name} 应在 0–10080 分钟之间")));
+            return Err(
+                ApiError::bad("track_range", format!("{name} 应在 0–10080 分钟之间")).param("name", name),
+            );
         }
     }
     if !step_s.is_finite() || step_s < 1.0 {
-        return Err(ApiError::bad_request("step_s 不能小于 1"));
+        return Err(ApiError::bad("track_step", "step_s 不能小于 1"));
     }
     let start = at - Duration::milliseconds((before * 60_000.0) as i64);
     let end = at + Duration::milliseconds((after * 60_000.0) as i64);
     let step = Duration::milliseconds((step_s * 1000.0) as i64);
-    let points = cs.catalog.track(idx, start, end, step)?;
+    // 逐点外推可达数万次,放到阻塞线程池,不占用异步工作线程
+    let points = tokio::task::spawn_blocking(move || cs.catalog.track(idx, start, end, step))
+        .await
+        .map_err(ApiError::internal)??;
     Ok(Json(TrackResponse {
         norad_id: id,
         start,
@@ -521,10 +633,11 @@ async fn get_track(
 }
 
 async fn stats(State(state): State<Arc<AppState>>, Query(q): Query<ListQuery>) -> ApiResult<Stats> {
-    let filter = q.apply(&state.default_filter()).map_err(ApiError::bad_request)?;
-    let at = parse_at(&state, q.at.as_deref())?;
+    let filter = q.apply(&state.default_filter())?;
+    let scope = scope_of(&state, q.view.as_deref())?;
+    let at = parse_at(&scope, q.at.as_deref())?;
     let bin = q.bin_km.unwrap_or(50.0);
-    let cs = state.catalog.load_full();
+    let cs = scope.catalog;
     let s = tokio::task::spawn_blocking(move || {
         let cat = &cs.catalog;
         let idx = cat.select(&filter, at);
@@ -536,7 +649,7 @@ async fn stats(State(state): State<Arc<AppState>>, Query(q): Query<ListQuery>) -
         }
     })
     .await
-    .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(ApiError::internal)?;
     Ok(Json(s))
 }
 
@@ -565,10 +678,12 @@ async fn stream(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> Res
     let guard = ClientGuard(state.clone());
     if prev >= max {
         drop(guard);
-        return ApiError::new(
+        return ApiError::coded(
             StatusCode::SERVICE_UNAVAILABLE,
+            "ws_limit",
             format!("WebSocket 连接数已达上限 {max}"),
         )
+        .param("max", max)
         .into_response();
     }
     ws.max_message_size(64 * 1024)

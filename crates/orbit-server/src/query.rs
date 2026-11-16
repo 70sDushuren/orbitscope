@@ -1,5 +1,6 @@
 //! 请求参数:URL 查询串中的过滤条件,以及 JSON 局部过滤条件的合并。
 
+use crate::errors::Coded;
 use orbit_core::{AltitudeMode, Filter, ObjectType, UnknownSizePolicy};
 use serde::Deserialize;
 
@@ -23,6 +24,8 @@ pub struct ListQuery {
     pub any_age: Option<bool>,
     /// 时刻:now、RFC3339 或相对偏移(+90m 等)
     pub at: Option<String>,
+    /// 使用某个连接的"指定时刻"视图(编号见 WS 的 catalog 消息)
+    pub view: Option<String>,
     // ---- 列表 ----
     pub page: Option<usize>,
     pub per_page: Option<usize>,
@@ -37,21 +40,23 @@ fn split_list(s: &str) -> impl Iterator<Item = &str> {
 }
 
 /// 解析类型名,拒绝无法识别的值(避免拼写错误被静默当作 UNKNOWN)。
-pub fn parse_type(s: &str) -> Result<ObjectType, String> {
+pub fn parse_type(s: &str) -> Result<ObjectType, Coded> {
     let norm = s.replace(['-', '_'], " ");
     let t = ObjectType::parse_lenient(&norm);
     let is_unknown_word = matches!(norm.to_ascii_uppercase().as_str(), "UNKNOWN" | "UNK");
     if t == ObjectType::Unknown && !is_unknown_word {
-        return Err(format!(
-            "未知的物体类型 {s:?}(可选 payload, rocket-body, debris, unknown)"
-        ));
+        return Err(Coded::new(
+            "unknown_type",
+            format!("未知的物体类型 {s:?}(可选 payload, rocket-body, debris, unknown)"),
+        )
+        .param("value", s));
     }
     Ok(t)
 }
 
 impl ListQuery {
     /// 在 `base` 上叠加查询参数并校验。
-    pub fn apply(&self, base: &Filter) -> Result<Filter, String> {
+    pub fn apply(&self, base: &Filter) -> Result<Filter, Coded> {
         let mut f = base.clone();
         if let Some(v) = self.alt_min {
             f.alt_min_km = v;
@@ -88,27 +93,30 @@ impl ListQuery {
         } else if self.max_age_days.is_some() {
             f.max_epoch_age_days = self.max_age_days;
         }
-        f.validate().map_err(|e| e.to_string())?;
+        f.validate()?;
         Ok(f)
     }
 }
 
 /// 把 JSON 对象中的字段合并到 `base` 上(未出现的字段保持不变),再校验。
 /// 未知字段会报错(`Filter` 使用 `deny_unknown_fields`)。
-pub fn merge_filter(base: &Filter, patch: &serde_json::Value) -> Result<Filter, String> {
+pub fn merge_filter(base: &Filter, patch: &serde_json::Value) -> Result<Filter, Coded> {
     let patch = match patch {
         serde_json::Value::Null => return Ok(base.clone()),
         serde_json::Value::Object(m) => m,
-        _ => return Err("filter 必须是 JSON 对象".into()),
+        _ => return Err(Coded::new("filter_not_object", "filter 必须是 JSON 对象")),
     };
-    let mut v = serde_json::to_value(base).map_err(|e| e.to_string())?;
+    let invalid = |e: serde_json::Error| {
+        Coded::new("invalid_filter", format!("无效的过滤条件: {e}")).param("detail", e.to_string())
+    };
+    let mut v = serde_json::to_value(base).map_err(invalid)?;
     if let serde_json::Value::Object(m) = &mut v {
         for (k, val) in patch {
             m.insert(k.clone(), val.clone());
         }
     }
-    let f: Filter = serde_json::from_value(v).map_err(|e| format!("无效的过滤条件: {e}"))?;
-    f.validate().map_err(|e| e.to_string())?;
+    let f: Filter = serde_json::from_value(v).map_err(invalid)?;
+    f.validate()?;
     Ok(f)
 }
 

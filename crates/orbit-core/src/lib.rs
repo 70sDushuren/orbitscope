@@ -31,7 +31,7 @@ pub mod tle;
 
 pub use catalog::{BuildReport, Catalog, Snapshot, TrackPoint, apply_meta};
 pub use elements::DerivedOrbit;
-pub use error::{CoreError, RecordError};
+pub use error::{CoreError, FilterIssue, RecordError};
 pub use filter::{AltitudeMode, Filter, UnknownSizePolicy};
 pub use frames::Geodetic;
 pub use model::{DataSource, GpRecord, NoradId, ObjectMeta, ObjectType, RcsCategory, RcsInfo, SpaceObject};

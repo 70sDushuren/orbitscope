@@ -11,7 +11,8 @@ dir = "/var/lib/orbitscope"
 
 [server]
 # 容器内需监听所有地址,端口映射由 docker -p 控制。
-# 未设置 ORBITSCOPE_API_TOKEN 时,写操作(修改默认过滤、手动刷新)只允许容器内本机发起。
+# 未设置 ORBITSCOPE_API_TOKEN 时,写操作(网页上修改设置、修改默认过滤、手动刷新)只允许容器内本机发起;
+# 经端口映射进来的请求不算本机。需要在网页上修改设置时请设置该环境变量,并在网页的 API token 输入框中填写。
 bind = "0.0.0.0:8080"
 # 镜像已内置 CesiumJS,浏览器无需访问 CDN
 cesium_dir = "/opt/cesium"

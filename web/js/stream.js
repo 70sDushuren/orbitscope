@@ -38,6 +38,8 @@ export class Stream {
   constructor(handlers) {
     this.handlers = handlers;
     this.subscription = null;
+    // 本连接的时间:null = 实时;数字 = "指定时刻"时钟相对本机时钟的偏移(毫秒)
+    this.timeOffsetMs = null;
     this.retryMs = 1000;
     this.ws = null;
     this.closed = false;
@@ -55,7 +57,8 @@ export class Stream {
     ws.onopen = () => {
       this.retryMs = 1000;
       this.handlers.state?.(true);
-      if (this.subscription) this.send(this.subscription);
+      // 新连接:带上时间(服务端按连接保存;指定时刻的时钟一直在走,重连后从当前读数继续)
+      if (this.subscription) this.send({ ...this.subscription, time: this.timeValue() });
     };
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
@@ -86,9 +89,21 @@ export class Stream {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
   }
 
-  /** 订阅(断线重连后自动重发)。 */
+  timeValue() {
+    return this.timeOffsetMs === null ? 'live' : new Date(Date.now() + this.timeOffsetMs).toISOString();
+  }
+
+  /** 订阅(断线重连后自动重发)。不带时间:服务端保持本连接当前的时间模式。 */
   subscribe(filter, rateHz = 1) {
     this.subscription = { type: 'subscribe', filter, rate_hz: rateHz };
     this.send(this.subscription);
+  }
+
+  /**
+   * 设置本连接的时间,只影响本页面:`null` 回到实时;否则从 `startMs`(UTC 毫秒)起回放,时钟继续走。
+   */
+  setTime(startMs) {
+    this.timeOffsetMs = startMs === null ? null : startMs - Date.now();
+    if (this.subscription) this.send({ ...this.subscription, time: this.timeValue() });
   }
 }

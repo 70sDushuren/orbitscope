@@ -84,6 +84,16 @@ export function t(key, params) {
   return s;
 }
 
+/**
+ * 服务端错误的本地化说明。服务端的错误带机器可读的 `code` 与 `params`
+ * (REST 的 Error 对象、WS 的 error 消息都适用);词典中有 `err.<code>` 时用它,否则用服务端给的说明。
+ */
+export function errText(e) {
+  const key = e && e.code ? `err.${e.code}` : null;
+  if (key && (key in dict || key in fallback)) return t(key, e.params || {});
+  return (e && e.message) || String(e);
+}
+
 /** 按当前语言格式化数字。 */
 export function fmtNumber(v, opts) {
   return new Intl.NumberFormat(current === 'zh-HK' ? 'zh-HK' : current, opts).format(v);

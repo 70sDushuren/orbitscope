@@ -98,23 +98,24 @@ impl Filter {
 
     /// 校验参数合法性。
     pub fn validate(&self) -> Result<(), CoreError> {
-        let bad = |m: &str| Err(CoreError::InvalidFilter(m.to_string()));
+        use crate::error::FilterIssue;
+        let bad = |issue: FilterIssue| Err(CoreError::InvalidFilter(issue));
         if self.alt_min_km.is_nan() || self.alt_max_km.is_nan() {
-            return bad("高度范围不能为 NaN");
+            return bad(FilterIssue::AltNan);
         }
         if self.alt_min_km > self.alt_max_km {
-            return bad("alt_min_km 不能大于 alt_max_km");
+            return bad(FilterIssue::AltOrder);
         }
         if !self.min_size_cm.is_finite() || self.min_size_cm < 0.0 {
-            return bad("min_size_cm 必须是非负有限数");
+            return bad(FilterIssue::MinSize);
         }
         if let (Some(lo), Some(hi)) = (self.inclination_min_deg, self.inclination_max_deg)
             && lo > hi
         {
-            return bad("inclination_min_deg 不能大于 inclination_max_deg");
+            return bad(FilterIssue::InclinationOrder);
         }
         if self.max_epoch_age_days.is_some_and(|d| d.is_nan() || d < 0.0) {
-            return bad("max_epoch_age_days 必须非负");
+            return bad(FilterIssue::EpochAge);
         }
         Ok(())
     }

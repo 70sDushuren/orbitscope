@@ -14,7 +14,7 @@ services:
       # [sources.spacetrack] enabled = true 的配置文件
       ORBITSCOPE_SPACETRACK_USER: ${ORBITSCOPE_SPACETRACK_USER:-}
       ORBITSCOPE_SPACETRACK_PASSWORD: ${ORBITSCOPE_SPACETRACK_PASSWORD:-}
-      # 对外开放写接口时设置(至少 16 个字符)
+      # 在网页上修改设置、或对外开放写接口时设置(至少 16 个字符),并在网页"时间与数据"面板填写同一个值
       ORBITSCOPE_API_TOKEN: ${ORBITSCOPE_API_TOKEN:-}
       RUST_LOG: ${RUST_LOG:-info}
 volumes:
