@@ -2,7 +2,7 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循语义化版本。
 
-## [未发布]
+## [0.3.0] - 2026-11-17
 
 ### 安全
 - 未设置 API token 时,写接口不再接受经反向代理转发的请求(带有 `X-Forwarded-For`、`X-Real-IP`、`Forwarded`、

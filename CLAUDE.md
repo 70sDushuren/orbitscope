@@ -81,7 +81,7 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
   新增或修改源文字后,运行 `node scripts/i18n/i18n.mjs translate`(需 ANTHROPIC_API_KEY)或人工补译 `en.json`、`zh-HK.json`
   后运行 `stamp`;`check` 必须通过才能发布。`zh-HK` 用香港粵語書面語。
 - 发布走 GitHub Actions 的 "Prepare release"(自动补译、改版本号、打标签、调用 Release):先更新 `CHANGELOG.md`
-  (把"未发布"改为版本号)。Release 构建四个平台的二进制(Linux x86_64 / arm64、macOS arm64、Windows x86_64)并把
+  (把"未发布"改为版本号;Release 页面的说明取自 CHANGELOG 中该版本的一节)。Release 构建四个平台的二进制(Linux x86_64 / arm64、macOS arm64、Windows x86_64)并把
   多架构 Docker 镜像推到 ghcr.io。已有标签发布失败时用 Release 工作流的 "Run workflow" 输入标签重跑,不要移动标签。
 - 公共 API 写 rustdoc;注释和文档可用中文,标识符用英文。
 
@@ -111,5 +111,5 @@ cargo run -p orbit-sources --example fetch -- --spacetrack     # 需设置凭据
 - [x] v0.2.1 界面多语言(简体 / English / 繁體香港)与发布时自动翻译
 - [x] v0.2 历史归档与采集策略(orbit-archive;known-at / nearest-epoch / latest;serve / daemon / external;Web 设置面板)
 - [x] v0.2.1 已发布(GitHub Release,三平台二进制)
-- [ ] 未发布(见 CHANGELOG"未发布"):反向代理下的写鉴权修复、网页 token 输入、"指定时刻"按连接生效、错误信息多语言、
-  Cesium SRI、Linux arm64 与 Docker 镜像发布、浏览器冒烟测试进 CI、依赖安全检查(MSRV 1.89)
+- [x] v0.3.0:反向代理下的写鉴权修复、网页 token 输入、"指定时刻"按连接生效、错误信息多语言、Cesium SRI、
+  Linux arm64 与 Docker 镜像发布、浏览器冒烟测试进 CI、依赖安全检查(MSRV 1.89)

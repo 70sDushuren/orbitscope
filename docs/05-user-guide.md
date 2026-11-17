@@ -1,12 +1,12 @@
 # OrbitScope 使用手册
 
-> 适用版本 0.2.1。设计细节见 [03-design.md](03-design.md)。
+> 适用版本 0.3.0。设计细节见 [03-design.md](03-design.md)。
 
 ## 1. 安装
 
 ### 1.1 预编译二进制
 在 GitHub Releases 页面下载对应平台的压缩包(Linux x86_64、Linux arm64、macOS Apple Silicon、Windows x86_64;
-Linux arm64 自 v0.2.1 之后的版本起提供),
+Linux arm64 自 v0.3.0 起提供),
 解压后得到 `orbitscope` 可执行文件、示例配置与许可证。
 
 ### 1.2 从源码编译
@@ -23,7 +23,7 @@ cargo build --release
 镜像内置 CesiumJS,浏览器无需访问 CDN:
 
 ```bash
-# 使用已发布的镜像(amd64 / arm64;v0.2.1 之后的版本提供)
+# 使用已发布的镜像(amd64 / arm64;v0.3.0 起提供)
 docker run -d -p 127.0.0.1:8080:8080 \
   -v orbitscope-cache:/var/cache/orbitscope -v orbitscope-data:/var/lib/orbitscope \
   ghcr.io/70sdushuren/orbitscope:latest

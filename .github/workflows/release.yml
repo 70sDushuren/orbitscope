@@ -80,6 +80,23 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+      - name: Release notes from CHANGELOG
+        run: |
+          # 取 CHANGELOG 中 "## [版本号]" 到下一个 "## [" 之间的内容作为发布说明
+          version="${TAG#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && index($0, "## [") == 1 { exit }
+            on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "更新内容见 [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md)。" > "$RUNNER_TEMP/notes.md"
+          fi
+          cat "$RUNNER_TEMP/notes.md"
       - uses: actions/download-artifact@v8
         with:
           pattern: bin-*
@@ -90,6 +107,8 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
+          name: OrbitScope ${{ env.TAG }}
+          body_path: ${{ runner.temp }}/notes.md
           files: dist/*
           generate_release_notes: true
 

@@ -30,7 +30,7 @@ docker compose up -d
 ```
 
 预编译二进制(Linux x86_64 / arm64、macOS Apple Silicon、Windows x86_64)见
-[Releases](https://github.com/70sDushuren/orbitscope/releases)。Docker 镜像与 Linux arm64 二进制自 v0.2.1 之后的版本起提供。
+[Releases](https://github.com/70sDushuren/orbitscope/releases)。Docker 镜像与 Linux arm64 二进制自 v0.3.0 起提供。
 
 命令行示例:
 

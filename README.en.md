@@ -35,7 +35,7 @@ docker compose up -d
 
 Prebuilt binaries (Linux x86_64 / arm64, macOS Apple Silicon, Windows x86_64) are on the
 [Releases](https://github.com/70sDushuren/orbitscope/releases) page. The Docker image and the Linux arm64 binary
-are published for versions after v0.2.1.
+are published from v0.3.0 onwards.
 
 Command-line examples:
 
