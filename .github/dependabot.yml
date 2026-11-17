@@ -17,6 +17,10 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # 这个 action 的"版本"是 Rust 工具链版本(@stable、@1.89):MSRV 任务固定的 1.89 必须与
+      # Cargo.toml 的 rust-version 一致,不能被当作依赖升级
+      - dependency-name: dtolnay/rust-toolchain
 
   - package-ecosystem: npm
     directory: /scripts/i18n

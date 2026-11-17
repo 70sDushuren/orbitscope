@@ -113,7 +113,9 @@ export class Globe {
     const now = performance.now();
     if (this.frameWall) this.frameDt = Math.min(Math.max(now - this.frameWall, 100), 5000);
     this.frameWall = now;
-    this.prevTimeMs = this.frameTimeMs || f.timeMs;
+    // 时间跳变(切换实时 / 指定时刻)时不在两个时刻之间插值,直接从新时刻开始
+    const jumped = Math.abs(f.timeMs - this.frameTimeMs) > 60_000;
+    this.prevTimeMs = this.frameTimeMs && !jumped ? this.frameTimeMs : f.timeMs;
     this.frameTimeMs = f.timeMs;
 
     // 旧的目标位置成为新的起点
@@ -162,11 +164,21 @@ export class Globe {
     return this.prevTimeMs + (this.frameTimeMs - this.prevTimeMs) * a;
   }
 
-  /** 某物体当前显示位置(Cartesian3,米);不在显示集合中时为 null。 */
+  /**
+   * 某物体当前显示位置(Cartesian3,米);不在显示集合中时为 null。
+   * 直接由两帧插值计算,不读取点图元:刚收到编目或位置帧、尚未渲染时,图元的位置还没有更新(仍在原点)。
+   */
   positionOf(i) {
     const slot = this.slotOf.get(i);
     if (slot === undefined || !this.visible[slot]) return null;
-    return this.C.Cartesian3.clone(this.bySlot[slot].position);
+    const a = Math.min((performance.now() - this.frameWall) / this.frameDt, 1);
+    const o = slot * 3;
+    const x = this.prev[o] + (this.cur[o] - this.prev[o]) * a;
+    const y = this.prev[o + 1] + (this.cur[o + 1] - this.prev[o + 1]) * a;
+    const z = this.prev[o + 2] + (this.cur[o + 2] - this.prev[o + 2]) * a;
+    // 原点或非有限值无法换算经纬度
+    if (!Number.isFinite(x + y + z) || (x === 0 && y === 0 && z === 0)) return null;
+    return new this.C.Cartesian3(x, y, z);
   }
 
   pick(windowPos) {
@@ -223,6 +235,7 @@ export class Globe {
     if (!pos) return;
     const C = this.C;
     const carto = C.Cartographic.fromCartesian(pos);
+    if (!carto) return;
     this.viewer.camera.flyTo({
       destination: C.Cartesian3.fromRadians(carto.longitude, carto.latitude, carto.height + 4_000_000),
       duration: 1.5,

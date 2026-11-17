@@ -57,8 +57,12 @@ const OUT = process.argv[3] || '.';
   if (await page.textContent('#settings-error')) fail(`切换时刻不应报错: ${await page.textContent('#settings-error')}`);
   await page.check('input[name=time_mode][value=live]');
   await page.click('#settings-form button[type=submit]');
-  await page.waitForFunction(() => window.orbitscope.state.timeMode === 'live' && !document.getElementById('st-time').textContent.includes('12:15:'), null, { timeout: 15000 })
+  // 回到实时后应直接显示服务端时刻(12:3x),不能出现两个时刻之间的插值
+  await page.waitForFunction(() => window.orbitscope.state.timeMode === 'live' && document.getElementById('st-time').textContent.includes(' 12:3'), null, { timeout: 15000 })
     .catch(() => fail('未能回到实时'));
+  // 已选中物体的实时经纬度在切换后仍能显示
+  await page.waitForFunction(() => /\d/.test(document.getElementById('d-latlon').textContent), null, { timeout: 15000 })
+    .catch(() => fail('切换时间后详情面板没有实时位置'));
   console.log('时间切换:', liveTime, '→ 指定时刻 → ', await page.textContent('#st-time'));
 
   // 非法过滤条件应在表单内提示

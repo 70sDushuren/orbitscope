@@ -126,8 +126,9 @@ function updateLive(force = false) {
   lastLive = now;
   const C = globe.C;
   const pos = sel.i !== null && sel.i !== undefined ? globe.positionOf(sel.i) : null;
-  if (pos) {
-    const c = C.Cartographic.fromCartesian(pos);
+  // 位置无法换算经纬度时(极少见)fromCartesian 返回 undefined,按"没有实时位置"处理
+  const c = pos ? C.Cartographic.fromCartesian(pos) : null;
+  if (c) {
     const st = sel.data.state;
     renderLive(detailDom, {
       lat: C.Math.toDegrees(c.latitude), lon: C.Math.toDegrees(c.longitude), alt: c.height / 1000,
